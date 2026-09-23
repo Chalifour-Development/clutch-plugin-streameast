@@ -1,0 +1,29 @@
+{
+  "id": "mlb:401817058",
+  "sport": "mlb",
+  "title": "Giants @ Twins",
+  "startsAt": "2026-09-23T19:45:00.000Z",
+  "status": "live",
+  "competitors": [
+    {
+      "id": "mlb:MIN",
+      "sport": "mlb",
+      "name": "Minnesota Twins",
+      "shortName": "Twins",
+      "abbreviation": "MIN",
+      "aliases": []
+    },
+    {
+      "id": "mlb:SF",
+      "sport": "mlb",
+      "name": "San Francisco Giants",
+      "shortName": "Giants",
+      "abbreviation": "SF",
+      "aliases": []
+    }
+  ],
+  "keywords": [
+    "MLB",
+    "baseball"
+  ]
+}

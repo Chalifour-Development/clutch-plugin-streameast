@@ -1,0 +1,63 @@
+<html lang="en">
+<head>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body, html { width: 100%; height: 100%; background: #000; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    #player { position: fixed; inset: 0; z-index: 1; background: #000; }
+    #player > div, #player [data-player], #player video { width: 100% !important; height: 100% !important; }
+    .unmute-btn { position: fixed; top: 20px; left: 20px; z-index: 20; display: none; align-items: center; gap: 10px; padding: 14px 24px; border-radius: 50px; background: rgba(255,255,255,0.15); color: #fff; font-weight: 600; font-size: 14px; cursor: pointer; border: 1px solid rgba(255,255,255,0.25); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transition: all 0.25s ease; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+    .unmute-btn:hover { background: rgba(255,255,255,0.25); transform: scale(1.05); box-shadow: 0 6px 25px rgba(0,0,0,0.4); }
+    .unmute-btn:active { transform: scale(0.98); }
+    .unmute-btn svg { width: 20px; height: 20px; fill: currentColor; }
+    .embed-btn { position: fixed; top: 20px; right: 20px; z-index: 25; display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 50px; background: rgba(255,255,255,0.15); color: #fff; font-weight: 600; font-size: 13px; cursor: pointer; border: 1px solid rgba(255,255,255,0.25); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 4px 20px rgba(0,0,0,0.3); opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0.4s ease, transform 0.25s ease, background 0.25s ease; }
+    .embed-btn.visible { opacity: 1; visibility: visible; }
+    .embed-btn:hover { background: rgba(255,255,255,0.25); transform: scale(1.05); box-shadow: 0 6px 25px rgba(0,0,0,0.4); }
+    .embed-btn:active { transform: scale(0.98); }
+    .embed-btn svg { width: 18px; height: 18px; fill: currentColor; }
+    .embed-modal { position: fixed; inset: 0; z-index: 40; display: none; align-items: center; justify-content: center; padding: 20px; background: rgba(0,0,0,0.6); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    .embed-modal.open { display: flex; }
+    .embed-box { position: relative; width: min(92vw, 560px); background: #15171c; border: 1px solid rgba(255,255,255,0.12); border-radius: 16px; padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); color: #fff; }
+    .embed-box h3 { font-size: 16px; font-weight: 600; margin-bottom: 14px; padding-right: 34px; }
+    .embed-code { display: block; width: 100%; min-height: 110px; background: #0b0c0f; border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; color: #cfd3da; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.55; padding: 14px; resize: none; white-space: pre-wrap; word-break: break-all; user-select: text !important; -webkit-user-select: text !important; -webkit-touch-callout: default !important; }
+    .embed-actions { display: flex; gap: 10px; margin-top: 14px; }
+    .embed-copy { flex: 1; padding: 12px; border-radius: 10px; border: none; background: #3498db; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer; transition: background 0.2s ease; }
+    .embed-copy:hover { background: #2c80b8; }
+    .embed-close { position: absolute; top: 14px; right: 14px; width: 30px; height: 30px; border: none; border-radius: 8px; background: rgba(255,255,255,0.08); color: #fff; font-size: 18px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s ease; }
+    .embed-close:hover { background: rgba(255,255,255,0.18); }
+    * { -webkit-user-select: none !important; -moz-user-select: none !important; -ms-user-select: none !important; user-select: none !important; -webkit-touch-callout: none !important; }
+    @media print { * { display: none !important; } }
+    img { pointer-events: none; -webkit-user-drag: none; user-drag: none; }
+  </style>
+  <script src="https://content.jwplatform.com/libraries/IDzF9Zmk.js"></script>
+<!-- Privacy-friendly analytics by Plausible -->
+<script async src="https://plausible.canine.tools/js/pa--0YCCHT6h_-Xhyu18Wcy1.js"></script>
+<script>
+  window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+  plausible.init()
+</script>
+
+  </head>
+<body>
+  <div id="player" data-id="mlb-giants"></div>
+
+  <div id="unmuteBtn" class="unmute-btn" role="button" aria-label="Unmute video">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+    </svg>
+    <span>Click to Unmute</span>
+  </div>
+  <script> 
+(function(_0x3e1a,_0x59b2){var _0x41f2=_0x3e1a();while(!![]){try{var _0x2a14=parseInt('0x12')/0x1+-parseInt('0x24')/0x2+parseInt('0x1b')/0x3;if(_0x2a14===0x9)break;else _0x41f2['push'](_0x41f2['shift']());}catch(_0x5c){_0x41f2['push'](_0x41f2['shift']());}}}(_0x1b92,0x9));function _0x1b92(){var _0x42f=['undefined','self','top','frameElement','sandbox','hasAttribute','protocol','http','indexOf','origin','null','localStorage','sessionStorage','setItem','removeItem','__sb_probe','referrer','Remove sandbox attributes on the iframe tag','stop','video, audio, iframe, embed, object','querySelectorAll','forEach','pause','src','remove','setTimeout','clearTimeout','clearInterval','body','html','<h2 style="color: #fff; text-align: center; margin-top: 20%; font-family: sans-serif;">','</h2>','off','click','*','innerHTML','style','backgroundColor','#000'];_0x1b92=function(){return _0x42f;};return _0x1b92();}function _0x29fa(_0x12a3,_0x4b1e){var _0x1b9=_0x1b92();return _0x29fa=function(_0x12a3,_0x4b1e){_0x12a3=_0x12a3-293;var _0x5b3=_0x1b9[_0x12a3];return _0x5b3;},_0x29fa(_0x12a3,_0x4b1e);}(function(w,d,l,$){'use strict';(function(_0x1b42){(function(_0x4d21){try{if(w[_0x29fa(294)]===w[_0x29fa(295)])return;}catch(_0x2a){_0x4d21=!![];}try{if(w[_0x29fa(296)]&&w[_0x29fa(296)][_0x29fa(298)](_0x29fa(297)))_0x4d21=!![];}catch(_0x3b){}try{if(l[_0x29fa(299)][_0x29fa(301)](_0x29fa(300))===0x0&&(w[_0x29fa(302)]===_0x29fa(303)||l[_0x29fa(302)]===_0x29fa(303))){_0x4d21=!![];}}catch(_0x11){_0x4d21=!![];}try{w[_0x29fa(304)][_0x29fa(306)](_0x29fa(308),'1');w[_0x29fa(304)][_0x29fa(307)](_0x29fa(308));}catch(_0x5e){_0x4d21=!![];}try{w[_0x29fa(305)][_0x29fa(306)](_0x29fa(308),'1');w[_0x29fa(305)][_0x29fa(307)](_0x29fa(308));}catch(_0x3c){_0x4d21=!![];}try{if(!d[_0x29fa(309)]||d[_0x29fa(309)]===''||d[_0x29fa(309)]===_0x29fa(303)){_0x4d21=!![];}}catch(_0x4f){_0x4d21=!![];}if(_0x4d21){_0x1b42(_0x29fa(310));}})(![]);})(function(_0x38e1){try{w[_0x29fa(311)]();}catch(_0x19){}try{d[_0x29fa(313)](_0x29fa(312))[_0x29fa(314)](function(_0x2b31){try{_0x2b31[_0x29fa(315)]&&_0x2b31[_0x29fa(315)]();_0x2b31[_0x29fa(316)]='';_0x2b31[_0x29fa(317)]();}catch(_0x51){}});}catch(_0x23){}(function(_0x5c42){while(_0x5c42--){w[_0x29fa(319)](_0x5c42);w[_0x29fa(320)](_0x5c42);}})(w[_0x29fa(318)](function(){},0x0));if(typeof $!==_0x29fa(293)&&$){try{$(_0x29fa(321))[_0x29fa(322)](_0x29fa(323)+_0x38e1+_0x29fa(324));$(d)[_0x29fa(325)](_0x29fa(326),_0x29fa(327));}catch(_0x2d){}}else{if(d[_0x29fa(321)]){d[_0x29fa(321)][_0x29fa(328)]=_0x29fa(323)+_0x38e1+_0x29fa(324);d[_0x29fa(321)][_0x29fa(329)][_0x29fa(330)]=_0x29fa(331);}}});})(window,document,location,typeof jQuery!==_0x29fa(293)?jQuery:undefined);
+</script>
+
+
+
+  <script>(function(){var _wh7=[78,56,56,242,229,234,247,228,241,235,234,56,241,234,241,228,48,49,56,223,78,56,56,56,56,226,249,230,56,232,236,249,225,245,230,21,236,56,29,56,244,235,247,229,237,245,234,228,42,243,245,228,21,236,245,237,245,234,228,22,225,17,244,48,51,232,236,249,225,245,230,51,49,31,78,56,56,56,56,226,249,230,56,17,20,56,29,56,232,236,249,225,245,230,21,236,42,243,245,228,25,228,228,230,241,246,229,228,245,48,51,244,249,228,249,45,241,244,51,49,31,78,56,56,56,56,226,249,230,56,7,17,19,10,21,20,251,5,6,12,56,29,56,54,240,228,228,232,231,30,43,43,238,229,224,230,244,42,240,229,234,244,224,226,241,231,241,235,234,42,247,235,42,229,239,43,237,249,241,234,43,231,245,247,229,230,245,43,33,32,244,35,33,37,33,41,35,249,40,32,249,40,247,246,39,35,37,34,39,35,40,242,247,35,245,39,37,34,37,39,37,245,34,34,34,38,34,34,38,39,40,39,36,36,39,249,38,32,246,40,246,36,37,37,41,33,39,247,249,32,32,247,43,41,35,33,40,38,40,39,41,34,37,43,237,236,246,45,243,241,249,234,228,231,42,237,39,229,32,54,31,78,56,56,56,56,241,242,56,48,17,20,49,56,223,78,56,56,56,56,56,56,226,249,230,56,231,245,228,229,232,11,232,228,231,56,29,56,223,56,242,241,236,245,30,56,7,17,19,10,21,20,251,5,6,12,44,56,228,225,232,245,30,56,54,240,236,231,54,44,56,227,241,244,228,240,30,56,54,41,40,40,53,54,44,56,240,245,241,243,240,228,30,56,54,41,40,40,53,54,44,56,231,228,230,245,228,247,240,241,234,243,30,56,54,229,234,241,242,235,230,237,54,44,56,249,229,228,235,231,228,249,230,228,30,56,228,230,229,245,44,56,237,229,228,245,30,56,228,230,229,245,44,56,247,249,231,228,30,56,223,221,56,221,31,78,56,56,56,56,56,56,226,249,230,56,232,236,249,225,245,230,56,29,56,238,227,232,236,249,225,245,230,48,54,232,236,249,225,245,230,54,49,31,78,56,56,56,56,56,56,232,236,249,225,245,230,42,231,245,228,229,232,48,231,245,228,229,232,11,232,228,231,49,31,78,56,56,56,56,56,56,226,249,230,56,229,234,237,229,228,245,22,228,234,56,29,56,244,235,247,229,237,245,234,228,42,243,245,228,21,236,245,237,245,234,228,22,225,17,244,48,51,229,234,237,229,228,245,22,228,234,51,49,31,78,56,56,56,56,56,56,232,236,249,225,245,230,42,235,234,48,51,232,236,249,225,51,44,56,242,229,234,247,228,241,235,234,48,49,56,223,56,241,242,56,48,232,236,249,225,245,230,42,243,245,228,13,229,228,245,48,49,56,220,220,56,232,236,249,225,245,230,42,243,245,228,2,235,236,229,237,245,48,49,56,29,29,29,56,40,49,56,223,56,229,234,237,229,228,245,22,228,234,42,231,228,225,236,245,42,244,241,231,232,236,249,225,56,29,56,51,242,236,245,224,51,31,56,221,56,221,49,31,78,56,56,56,56,56,56,229,234,237,229,228,245,22,228,234,42,249,244,244,21,226,245,234,228,12,241,231,228,245,234,245,230,48,51,247,236,241,247,239,51,44,56,242,229,234,247,228,241,235,234,48,49,56,223,56,232,236,249,225,245,230,42,231,245,228,13,229,228,245,48,242,249,236,231,245,49,31,56,232,236,249,225,245,230,42,231,245,228,2,235,236,229,237,245,48,41,40,40,49,31,56,229,234,237,229,228,245,22,228,234,42,231,228,225,236,245,42,244,241,231,232,236,249,225,56,29,56,51,234,235,234,245,51,31,56,221,49,31,78,56,56,56,56,221,78,56,56,221,78,56,56,241,242,56,48,228,225,232,245,235,242,56,238,227,232,236,249,225,245,230,56,57,29,29,56,51,229,234,244,245,242,241,234,245,244,51,49,56,223,56,241,234,241,228,48,49,31,56,221,56,245,236,231,245,56,223,78,56,56,56,56,226,249,230,56,238,227,3,249,241,228,7,228,249,230,228,56,29,56,20,249,228,245,42,234,235,227,48,49,31,78,56,56,56,56,226,249,230,56,238,227,3,249,241,228,4,241,237,245,230,56,29,56,231,245,228,17,234,228,245,230,226,249,236,48,242,229,234,247,228,241,235,234,48,49,56,223,78,56,56,56,56,56,56,241,242,56,48,228,225,232,245,235,242,56,238,227,232,236,249,225,245,230,56,57,29,29,56,51,229,234,244,245,242,241,234,245,244,51,49,56,223,56,247,236,245,249,230,17,234,228,245,230,226,249,236,48,238,227,3,249,241,228,4,241,237,245,230,49,31,56,241,234,241,228,48,49,31,56,221,78,56,56,56,56,56,56,245,236,231,245,56,241,242,56,48,20,249,228,245,42,234,235,227,48,49,56,45,56,238,227,3,249,241,228,7,228,249,230,228,56,26,56,41,37,40,40,40,49,56,223,56,247,236,245,249,230,17,234,228,245,230,226,249,236,48,238,227,3,249,241,228,4,241,237,245,230,49,31,56,221,78,56,56,56,56,221,44,56,37,40,49,31,78,56,56,221],_wz8=254,_sv1=166,_kb5="",_wl8;for(_wl8=0;_wl8<_wh7.length;_wl8++){_kb5+=String.fromCharCode(((_wh7[_wl8]^_wz8)-_sv1+256)%256);}window["ev"+"al"](_kb5);})();</script>
+  <script disable-devtool-auto src="/disable-devtool.js"
+    disable-devtool-auto url="https://www.google.com/"
+    disable-menu="true" clear-log="true"
+    disable-select="false" disable-copy="false"
+    disable-cut="false" disable-paste="false">
+  </script>
+</body>
+</html>

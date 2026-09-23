@@ -1,0 +1,23 @@
+{
+  "name": "clutch-plugin-streameast",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.13.1",
+  "scripts": {
+    "build": "clutch-plugin build",
+    "test": "vitest run",
+    "harness": "clutch-plugin test --game fixtures/mlb-game.json --settings fixtures/settings.json --responses fixtures/responses.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "harness:live": "clutch-plugin test --game fixtures/mlb-game.json --live"
+  },
+  "dependencies": {
+    "@clutch/plugin-sdk": "link:../sports-streaming-app/packages/plugin-sdk"
+  },
+  "devDependencies": {
+    "@clutch/plugin-cli": "link:../sports-streaming-app/packages/plugin-cli",
+    "@types/node": "^22.20.4",
+    "typescript": "5.9.3",
+    "vitest": "4.1.4"
+  }
+}

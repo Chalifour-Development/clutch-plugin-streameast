@@ -1,0 +1,354 @@
+  <html>
+     <head>
+        <meta charset="utf-8">
+        <title>streamscenter</title>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge,hrome=1" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <!-- Clappr Builds -->
+        <script src="https://cdn.jsdelivr.net/npm/@clappr/player@0.14.5/dist/clappr.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@clappr/level-selector@1.1.0/dist/level-selector.min.js"></script>
+        <!-- P2PEngine -->
+        <script src="https://cdn.jsdelivr.net/npm/@swarmcloud/hls@2.18.0/p2p-engine.min.js"></script>
+        <!-- P2P Clappr Plugin -->
+        <script src="https://cdn.jsdelivr.net/npm/console-ban@5.0.0/dist/console-ban.min.js"></script>
+        <script>if(window==window.top) document.location="/"</script>
+        <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+     </head>
+
+     <script>
+        if (window.parent !== window) {
+            try {
+                const iframeElement = window.frameElement;
+
+                if (
+                    iframeElement &&
+                    iframeElement.hasAttribute('sandbox')
+                ) {
+                    iframeElement.removeAttribute('sandbox');
+                }
+            } catch (e) {
+            }
+        }
+     </script>
+
+     <style>
+        body {
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+        }
+
+        .player {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100% !important;
+            height: 100%;
+            min-height: 300px;
+            overflow: hidden;
+        }
+
+        .unmute {
+            background: transparent;
+            z-index: 2;
+            color: #fff;
+            position: absolute;
+            top: 1px;
+            left: -7px;
+            width: 180px;
+            border: 1px solid #12af83;
+            padding: 4px 0;
+            border-radius: 12px;
+            cursor: pointer;
+            opacity: .8;
+        }
+
+        .unmute:hover {
+            opacity: 1;
+        }
+     </style>
+     <body bgcolor="black">
+        <div id="player"></div>
+
+        <script>
+            let player = null;
+            let p2pEngine = null;
+            let boundHls = null;
+            let p2pBindTimer = null;
+
+            const streamUrl = "https://edgestream5.pro/hls/16yuitzaerghbhc16.m3u8?st=xy8KSI3QHmdGYzik3ubk2-Bbs-gNPZN0ieFCUNAW4Ew\u0026e=1790204919";
+
+            const streamId = "16yuitzaerghbhc16";
+
+            function WSUnmute() {
+                const overlay = document.getElementById("UnMutePlayer");
+
+                if (overlay) {
+                    overlay.style.display = "none";
+                }
+
+                if (player) {
+                    player.setVolume(100);
+                }
+            }
+
+            const p2pConfig = {
+                live: true,
+                p2pEnabled: true,
+                useHttpRange: true,
+                showSlogan: false,
+                sharePlaylist: true,
+                strictSegmentId: false,
+                startFromSegmentOffset: 0,
+                trickleICE: true,
+                trackerZone: "eu",
+
+                channelId: function() {
+                    return "streame-" + streamId;
+                },
+
+                announce: "https://eu.web3-lab.com:8443/v1",
+                swFile: "/sw.js",
+                token: "omHmDDWNR",
+                logLevel: "error"
+            };
+
+            const hlsjsConfig = {
+                autoStartLoad: true,
+                startPosition: -1,
+                enableWorker: true,
+
+                maxBufferSize: 0,
+                maxBufferLength: 40,
+                backBufferLength: 16,
+                maxBufferHole: 0.1,
+
+                liveSyncDurationCount: 10,
+                liveMaxLatencyDurationCount: 13,
+                maxLiveSyncPlaybackRate: 1.0,
+
+                lowLatencyMode: false,
+                startFragPrefetch: false
+            };
+
+            function cancelP2PBind() {
+                if (p2pBindTimer !== null) {
+                    clearTimeout(p2pBindTimer);
+                    p2pBindTimer = null;
+                }
+            }
+
+            function destroyP2PEngine() {
+                cancelP2PBind();
+
+                if (
+                    p2pEngine &&
+                    typeof p2pEngine.destroy === "function"
+                ) {
+                    p2pEngine.destroy();
+                }
+
+                p2pEngine = null;
+                boundHls = null;
+                delete p2pConfig.hlsjsInstance;
+            }
+
+            function bindP2PEngine(attempt = 0) {
+                if (!player) {
+                    return;
+                }
+
+                const playback =
+                    player.core?.getCurrentPlayback?.();
+
+                const hls = playback?._hls;
+
+                if (!hls) {
+                    if (attempt < 100) {
+                        cancelP2PBind();
+
+                        p2pBindTimer = setTimeout(function() {
+                            p2pBindTimer = null;
+                            bindP2PEngine(attempt + 1);
+                        }, 100);
+                    }
+
+                    return;
+                }
+
+                if (boundHls === hls && p2pEngine) {
+                    return;
+                }
+
+                destroyP2PEngine();
+
+                p2pConfig.hlsjsInstance = hls;
+                p2pEngine = new P2PEngineHls(p2pConfig);
+                boundHls = hls;
+            }
+
+            function createPlayer() {
+                player = new Clappr.Player({
+                    source: streamUrl,
+                    mimeType: "application/x-mpegURL",
+                    parentId: "#player",
+                    width: "100%",
+                    height: "100%",
+                    autoPlay: false,
+                    mute: false,
+					poster: "https://v2.streameast.ga/images/poster4.png",
+                    plugins: [LevelSelector],
+                    playback: {
+                        hlsjsConfig: hlsjsConfig
+                    },
+
+                    stretching: "bestfit",
+                    disableErrorScreen: true,
+                    preload: "auto",
+
+                    mediacontrol: {
+                        seekbar: "#12af83",
+                        buttons: "#12af83"
+                    },
+
+                    events: {
+                        onReady: function() {
+                            bindP2PEngine();
+                        }
+                    }
+                });
+
+                bindP2PEngine();
+            }
+
+            P2PEngineHls.tryRegisterServiceWorker(p2pConfig)
+                .catch(function() {
+                    return null;
+                })
+                .finally(function() {
+                    createPlayer();
+                });
+
+            window.addEventListener("beforeunload", function() {
+                destroyP2PEngine();
+
+                if (player) {
+                    player.destroy();
+                    player = null;
+                }
+            });
+        </script>
+
+        <script>
+           // Block right-click
+           document.addEventListener('contextmenu', function(e) {
+               e.preventDefault();
+           });
+
+           // Block console
+           if (typeof console !== "undefined") {
+               console.log = function() {};
+               console.warn = function() {};
+           }
+        </script>
+
+
+
+         <script>
+        (function () {
+          if (window.self === window.top) return;
+
+          function isSandboxed() {
+            try {
+              document.domain = document.domain;
+            } catch (e) {
+              return true;
+            }
+
+            try {
+              if (
+                  window.origin === 'null' ||
+                  location.origin === 'null'
+              ) {
+                  return true;
+              }
+            } catch (e) {
+              return true;
+            }
+
+            return false;
+          }
+
+          function showBlockOverlay() {
+            try {
+              if (
+                  window.player &&
+                  typeof window.player.stop === 'function'
+              ) {
+                  window.player.stop();
+              }
+
+              var v = document.querySelector('video');
+
+              if (v) {
+                  v.pause();
+                  v.removeAttribute('src');
+                  v.load();
+              }
+            } catch (e) {
+            }
+
+            document.body.innerHTML =
+              '<div style="position:fixed;inset:0;background:#000;color:#fff;' +
+              'display:flex;align-items:center;justify-content:center;text-align:center;' +
+              'font-family:Arial,sans-serif;padding:20px;">' +
+                '<div style="max-width:560px;">' +
+                  '<div style="font-size:22px;font-weight:bold;margin-bottom:16px;">Stream blocked on this site</div>' +
+                  '<div style="opacity:.9;line-height:1.6;margin-bottom:10px;">' +
+                    'Dear Webmaster,' +
+                  '</div>' +
+                  '<div style="opacity:.85;line-height:1.6;margin-bottom:20px;">' +
+                    'This stream cannot be played because the <code style="background:#222;padding:2px 6px;border-radius:4px;color:#12af83;">sandbox</code> ' +
+                    'attribute has been added to the iframe. ' +
+                    'Please <b>remove the <code style="background:#222;padding:2px 6px;border-radius:4px;color:#12af83;">sandbox</code> attribute</b> ' +
+                    'from your iframe code to allow the stream to play correctly.' +
+                  '</div>' +
+                '</div>' +
+              '</div>';
+          }
+
+          function run() {
+            if (isSandboxed()) {
+                showBlockOverlay();
+            }
+          }
+
+          if (document.body) {
+              run();
+          } else {
+              document.addEventListener('DOMContentLoaded', run);
+          }
+        })();
+        </script>
+
+
+
+<!-- Histats.com  START  (aync)-->
+<script type="text/javascript">var _Hasync= _Hasync|| [];
+_Hasync.push(['Histats.start', '1,5048020,4,0,0,0,00010000']);
+_Hasync.push(['Histats.fasi', '1']);
+_Hasync.push(['Histats.track_hits', '']);
+(function() {
+var hs = document.createElement('script'); hs.type = 'text/javascript'; hs.async = true;
+hs.src = ('//s10.histats.com/js15_as.js');
+(document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(hs);
+})();</script>
+<noscript><a href="/" target="_blank"><img  src="//sstatic1.histats.com/0.gif?5048020&101" alt="statistics" border="0"></a></noscript>
+<!-- Histats.com  END  -->
+
+     </body>
+  </html>
+)

@@ -1,0 +1,19 @@
+# Disabled until @clutch/plugin-sdk and @clutch/plugin-cli are on npm: CI has no sibling clutch-app checkout.
+name: plugin
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: clutch-plugin-streameast }
+      - uses: actions/checkout@v4
+        with: { repository: Chalifour-Development/clutch-app, path: sports-streaming-app }
+      - uses: pnpm/action-setup@v4
+        with: { version: 11.13.1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: pnpm install && pnpm build:packages
+        working-directory: sports-streaming-app
+      - run: pnpm install && pnpm test && pnpm typecheck && pnpm build && git diff --exit-code -- dist/plugin.js && pnpm harness
+        working-directory: clutch-plugin-streameast
