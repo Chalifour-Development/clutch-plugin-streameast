@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer-when-downgrade">
+    <title>Stream Player</title>
+    
+    <!-- Load Clappr Player from CDN -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/clappr@latest/dist/clappr.min.js"></script>
+    
+    <!-- Load CryptoJS for decryption -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    
+    <!-- PopAds -->
+    <script id="aclib" type="text/javascript" src="//acscdn.com/script/aclib.js"></script>
+    <script type="text/javascript">
+      aclib.runPop({
+          zoneId: '11359858',
+      });
+    </script>
+    
+    <!-- Cloudflare Web Analytics -->
+    <script type='module' src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "a1149cb10be34ba3bec53c67a2b8cc76"}'></script>
+    
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-X17BHPBTVW"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-X17BHPBTVW');
+    </script>
+
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+
+        #player-wrapper {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        #player {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Shared styles for UI controls */
+        .player-control {
+            position: absolute;
+            top: 20px;
+            z-index: 999;
+            background-color: rgba(20, 20, 20, 0.8);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            opacity: 0;
+            transition: opacity 0.3s ease, background-color 0.2s ease;
+            outline: none;
+        }
+
+        .player-control:hover {
+            background-color: rgba(60, 60, 60, 0.9);
+        }
+
+        #player-wrapper:hover .player-control {
+            opacity: 1;
+        }
+
+        #copy-btn {
+            right: 20px;
+            padding: 10px 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="player-wrapper">
+        <div id="player"></div>
+        <button id="copy-btn" class="player-control">Copy Embed URL</button>
+    </div>
+
+    <!-- IOS COMPATIBLE SCRIPT WITH DYNAMIC LOAD BALANCING & TOKEN ROUTING -->
+    <script>
+        (async function() {
+            const SECRET_KEY = "MySuperSecretKey123!"; 
+
+            // --- iOS & Apple Device Detection ---
+            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+            // 1. Extract stream parameter and define base endpoints
+            const urlParam = window.location.search.substring(1); 
+            const streamId = urlParam ? urlParam : 'default-id';
+            const streamPath = `/${streamId}/mono.ts.m3u8`;
+            
+            let servers = {
+                '1': `http://eu-4605069466.duckdns.org${streamPath}`,
+                '2': `https://us2-hlss2.b-cdn.net${streamPath}`,
+                '3': `https://hlss2.b-cdn.net${streamPath}`
+            };
+
+            // Instead of defaulting to '1', pick a random server ID (1, 2, or 3) right at the start
+            const serverKeys = Object.keys(servers);
+            const randomFallbackId = serverKeys[Math.floor(Math.random() * serverKeys.length)];
+            let currentServerId = randomFallbackId;
+
+            // 2. Run Smart Load Balancer Check First
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+                const lbResponse = await fetch('https://xyzstreams.blog/5/best-server', { signal: controller.signal });
+                clearTimeout(timeoutId);
+
+                if (lbResponse.ok) {
+                    const lbData = await lbResponse.json();
+                    console.log("Load Balancer Response:", lbData.best_server, "| Stats:", lbData.stats);
+                    
+                    // Specific mapping logic based on requested domains
+                    if (lbData.best_server.includes('eu-hlss.b-cdn.net')) {
+                        console.log("Selected Server 1 (eu-4605069466.duckdns.org)");
+                        currentServerId = '1';
+                    } else if (lbData.best_server.includes('dlhd.net')) {
+                        console.log("Selected Server 2 (us2-hlss2.b-cdn.net)");
+                        currentServerId = '2';
+                    } else if (lbData.best_server.includes('xyzstreams.space')) {
+                        console.log("Selected Server 3 (hlss2.b-cdn.net)");
+                        currentServerId = '3';
+                    } else {
+                        // If response is weird, just log the random fallback
+                        console.log(`Fallback to Random Server ${currentServerId}`);
+                    }
+                }
+            } catch (err) {
+                // If it times out or errors, it will use the random server picked earlier
+                console.warn(`Smart Load Balancer API failed. Falling back to random Server ${currentServerId}.`, err);
+            }
+
+            let currentPlayer = null;
+
+            // 3. Dynamic Token Fetcher Function (Runs depending on active server)
+            async function fetchTokenForServer(serverId) {
+                let tokenApiUrl = "http://eu-4605069466.duckdns.org/api/token"; // Default for Server 1
+                
+                if (serverId === '2' || servers[serverId].includes('tokenized.b-cdn.net')) {
+                    tokenApiUrl = "https://us2-hlss2.b-cdn.net/api/token";
+                } else if (serverId === '3' || servers[serverId].includes('xyzstreams.space')) {
+                    tokenApiUrl = "https://hlss2.b-cdn.net/api/token"; 
+                }
+
+                try {
+                    const response = await fetch(tokenApiUrl);
+                    if (!response.ok) throw new Error(`Failed to fetch token from ${tokenApiUrl}`);
+                    
+                    const data = await response.json();
+
+                    const key = CryptoJS.SHA256(SECRET_KEY); 
+                    const iv = CryptoJS.enc.Hex.parse(data.iv);
+                    const encryptedHex = CryptoJS.enc.Hex.parse(data.token);
+                    
+                    const cipherParams = CryptoJS.lib.CipherParams.create({ ciphertext: encryptedHex });
+                    const decrypted = CryptoJS.AES.decrypt(cipherParams, key, {
+                        iv: iv,
+                        mode: CryptoJS.mode.CBC,
+                        padding: CryptoJS.pad.Pkcs7
+                    });
+                    
+                    let rawToken = decrypted.toString(CryptoJS.enc.Utf8);
+                    return rawToken.trim().replace(/[^\x20-\x7E]/g, '');
+                } catch (err) {
+                    console.error(`[Player] Token security failed for server ${serverId}:`, err);
+                    return "";
+                }
+            }
+
+            async function switchServer(serverId) {
+                currentServerId = serverId;
+                
+                if (currentPlayer) {
+                    currentPlayer.destroy();
+                    currentPlayer = null;
+                }
+
+                let playerDiv = document.getElementById('player');
+                if (!playerDiv) {
+                    playerDiv = document.createElement('div');
+                    playerDiv.id = 'player';
+                    const wrapper = document.getElementById('player-wrapper');
+                    wrapper.insertBefore(playerDiv, wrapper.firstChild);
+                } else {
+                    playerDiv.innerHTML = ""; 
+                }
+
+                // Fetch the correct token corresponding to the chosen server endpoint
+                const streamToken = await fetchTokenForServer(serverId);
+                let streamSource = servers[serverId];
+
+                // --- CRITICAL IOS FIXES & ROUTING ---
+                if (isIOS && streamToken) {
+                    // Encode the token to prevent special characters from breaking the URL and append server=2
+                    streamSource += "?token=" + encodeURIComponent(streamToken) + "&server=1";
+                } else {
+                    // If not on iOS, just append server=2 (token is handled via headers)
+                    streamSource += "?server=1";
+                }
+
+                initClappr(streamSource, streamToken);
+            }
+
+            // 4. Initialize Clappr
+            function initClappr(streamSource, streamToken) {
+                try {
+                    currentPlayer = new Clappr.Player({
+                        source: streamSource,
+                        // Tell Clappr explicitly this is HLS so the URL parameter doesn't confuse it
+                        mimeType: "application/x-mpegURL", 
+                        parentId: "#player",
+                        width: '100%',
+                        height: '100%',
+                        autoPlay: false,
+                        // Conditionally mute for iOS
+                        mute: isIOS ? true : false, 
+                        playbackNotSupportedMessage: 'Please check your connection or stream link.',
+                        playback: {
+                            // Allows inline playback on iPhone instead of forcing native fullscreen
+                            playInline: true, 
+                            hlsjsConfig: {
+                                xhrSetup: function(xhr, url) {
+                                    // Add the token header ONLY if the device is not iOS
+                                    if (!isIOS && streamToken && url.includes('.m3u8')) {
+                                        xhr.setRequestHeader('x-token', streamToken);
+                                    }
+                                },
+                                fragLoadingTimeOut: 25000,
+                                fragLoadingMaxRetry: 6,
+                                fragLoadingRetryDelay: 1000,
+                                manifestLoadingTimeOut: 15000,
+                                levelLoadingTimeOut: 15000,
+                                liveSyncDurationCount: 3,
+                                maxBufferLength: 30,
+                                maxMaxBufferLength: 60
+                            }
+                        }
+                    });
+
+                    currentPlayer.on(Clappr.Events.PLAYER_ERROR, function(err) {
+                        // Automatically cycle through fallback servers on failure
+                        if (currentServerId === '1') {
+                            console.log("Playback error on Server 1, automatically switching to Server 2...");
+                            switchServer('2');
+                        } else if (currentServerId === '2') {
+                            console.log("Playback error on Server 2, automatically switching to Server 3...");
+                            switchServer('3');
+                        } else if (currentServerId === '3') {
+                            console.log("Playback error on Server 3, looping back to Server 1...");
+                            switchServer('1');
+                        }
+                    });
+
+                } catch (err) {
+                    console.error("Clappr setup crashed:", err);
+                }
+            }
+
+            // Start player with initial evaluated Server ID
+            await switchServer(currentServerId);
+
+            // Copy button
+            document.getElementById('copy-btn').addEventListener('click', function() {
+                const currentUrl = window.location.href; 
+                
+                // Fallback approach if navigator.clipboard is blocked by iframe policies
+                try {
+                    navigator.clipboard.writeText(currentUrl).then(successFn).catch(fallbackCopy);
+                } catch (e) {
+                    fallbackCopy();
+                }
+
+                function successFn() {
+                    const btn = document.getElementById('copy-btn');
+                    const originalText = btn.innerText;
+                    btn.innerText = 'Copied!';
+                    btn.style.borderColor = '#4CAF50';
+                    btn.style.color = '#4CAF50';
+                    setTimeout(() => {
+                        btn.innerText = originalText;
+                        btn.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                        btn.style.color = '#fff';
+                    }, 2000);
+                }
+
+                function fallbackCopy() {
+                    const textArea = document.createElement("textarea");
+                    textArea.value = currentUrl;
+                    document.body.appendChild(textArea);
+                    textArea.focus();
+                    textArea.select();
+                    try {
+                        document.execCommand('copy');
+                        successFn();
+                    } catch (err) {
+                        console.error('Failed to copy.', err);
+                    }
+                    document.body.removeChild(textArea);
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

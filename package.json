@@ -12,7 +12,9 @@
     "harness:live": "clutch-plugin test --game fixtures/mlb-game.json --live"
   },
   "dependencies": {
-    "@clutch/plugin-sdk": "link:../sports-streaming-app/packages/plugin-sdk"
+    "@clutch/plugin-sdk": "link:../sports-streaming-app/packages/plugin-sdk",
+    "@noble/ciphers": "^2.4.0",
+    "@noble/hashes": "^2.4.0"
   },
   "devDependencies": {
     "@clutch/plugin-cli": "link:../sports-streaming-app/packages/plugin-cli",

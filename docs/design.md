@@ -38,6 +38,12 @@ Linear: LAB-62. A Clutch provider plugin that finds free Streameast streams for 
    - an `https://...m3u8` literal in the HTML means we are done;
    - otherwise, decode any XOR/char-code `eval` blob and look again;
    - otherwise, follow the first nested `<iframe src>` with the current page as Referer.
+   - `xyzstreams.st/embed?<id>`: the page AES-encrypts a token per HLS host. It fetches
+     `<host>/api/token` (`{iv, token}` in hex), decrypts with AES-256-CBC using
+     SHA-256(`SECRET_KEY` from the page), and appends `?token=<t>&server=1` to
+     `<host>/<id>/mono.ts.m3u8`. Only https hosts are used; the cleartext duckdns host is
+     skipped because Android blocks cleartext playback. Crypto is @noble (pure JS) because
+     QuickJS has no WebCrypto, TextEncoder or TextDecoder.
 5. **Candidate.** `kind: 'hls'` with `User-Agent`, `Referer` and `Origin` set to the page
    that held the URL. Confidence comes from step 2. Signed URLs expire in a few hours, so
    they are resolved each time a game is opened, never cached.

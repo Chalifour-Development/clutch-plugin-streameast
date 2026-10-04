@@ -2,7 +2,10 @@
  * Pure string parsers for Streameast pages and the embeds they use. They are
  * regex based on purpose: the QuickJS sandbox has no DOM, and a bundled HTML
  * parser would cost more than these few well-defined shapes need.
- */
+*/
+import { cbc } from '@noble/ciphers/aes.js';
+import { hexToBytes } from '@noble/ciphers/utils.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 export interface Match {
   espnEventId?: string;
@@ -146,4 +149,46 @@ export function decodeEvalBlobs(html: string): string[] {
     out.push(s);
   }
   return out;
+}
+
+export interface XyzServer {
+  playlist: string;
+  token: string;
+}
+
+export interface XyzEmbed {
+  streamId: string;
+  secret: string;
+  servers: XyzServer[];
+}
+
+/**
+ * xyzstreams.st pages pick an HLS host, fetch `<host>/api/token`, AES-decrypt it
+ * with SHA-256(SECRET_KEY) and send it as `?token=` (iOS) or an `x-token` header.
+ * Only https hosts are kept: Android blocks cleartext playback.
+ */
+export function parseXyzEmbed(html: string, pageUrl: string): XyzEmbed | undefined {
+  const secret = /SECRET_KEY\s*=\s*["']([^"']+)["']/.exec(html)?.[1];
+  if (!secret || !/mono\.ts\.m3u8/.test(html)) return undefined;
+  const query = /\?([^#]*)/.exec(pageUrl)?.[1];
+  if (!query) return undefined;
+  const streamId = decodeURIComponent(query.split('&')[0]!);
+  const servers: XyzServer[] = [];
+  for (const m of html.matchAll(/['"]\d+['"]\s*:\s*`(https:\/\/[^`$/]+)\$\{streamPath\}`/g)) {
+    servers.push({
+      playlist: `${m[1]}/${streamId}/mono.ts.m3u8`,
+      token: `${m[1]}/api/token`,
+    });
+  }
+  return servers.length ? { streamId, secret, servers } : undefined;
+}
+
+export function decryptXyzToken(secret: string, ivHex: string, tokenHex: string): string {
+  // No TextEncoder in QuickJS either; the secret is ASCII.
+  const key = sha256(Uint8Array.from(secret, (c) => c.charCodeAt(0) & 0xff));
+  const plain = cbc(key, hexToBytes(ivHex)).decrypt(hexToBytes(tokenHex));
+  // No TextDecoder in the QuickJS sandbox; the token is printable ASCII.
+  let out = '';
+  for (const b of plain) if (b >= 0x20 && b <= 0x7e) out += String.fromCharCode(b);
+  return out.trim();
 }

@@ -1,7 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { decodeEvalBlobs, findIframeSrc, findM3u8, parseMatches, parseSources } from '../parse';
+import {
+  decodeEvalBlobs,
+  decryptXyzToken,
+  findIframeSrc,
+  findM3u8,
+  parseMatches,
+  parseSources,
+  parseXyzEmbed,
+} from '../parse';
 
 const fixture = (name: string) => readFileSync(join(__dirname, '../__fixtures__', name), 'utf8');
 
@@ -74,5 +82,27 @@ describe('embed helpers', () => {
     expect(findM3u8(decodeEvalBlobs(html).join('\n'))).toBe(
       'https://juxrd.hundxvision.co.uk/main/secure/98d795917a08a0cb3756370fc7e356535e6662662303443a28b0b455193ca88c/1790203165/mlb-giants.m3u8',
     );
+  });
+});
+
+describe('xyzstreams embed', () => {
+  it('reads the stream id, playlist hosts and token endpoints', () => {
+    expect(parseXyzEmbed(fixture('embed-xyzstreams.html'), 'https://xyzstreams.st/embed?nfl6')).toEqual({
+      streamId: 'nfl6',
+      secret: 'MySuperSecretKey123!',
+      servers: [
+        { playlist: 'https://us2-hlss2.b-cdn.net/nfl6/mono.ts.m3u8', token: 'https://us2-hlss2.b-cdn.net/api/token' },
+        { playlist: 'https://hlss2.b-cdn.net/nfl6/mono.ts.m3u8', token: 'https://hlss2.b-cdn.net/api/token' },
+      ],
+    });
+  });
+
+  it('is not an xyzstreams page when the markers are missing', () => {
+    expect(parseXyzEmbed(fixture('embed-flyembed.html'), 'https://flyembed.click/embed/17.php')).toBeUndefined();
+  });
+
+  it('decrypts the AES-CBC token with SHA-256 of the page secret', () => {
+    const { iv, token } = JSON.parse(fixture('xyzstreams-token.json')) as { iv: string; token: string };
+    expect(decryptXyzToken('MySuperSecretKey123!', iv, token)).toMatch(/^[0-9a-f]{32}$/);
   });
 });

@@ -155,3 +155,23 @@ describe('streameast provider', () => {
     expect(channels[0]).toMatchObject({ name: expect.stringContaining(' vs ') });
   });
 });
+
+describe('xyzstreams servers', () => {
+  const NFL = '/nfl/los-angeles-rams-vs-philadelphia-eagles/';
+  const ramsEagles: Game = { ...twinsGiants, id: 'nfl:401872970', sport: 'nfl', title: 'Eagles @ Rams', competitors: [] };
+
+  it('decrypts the token from the first working host into a tokenized playlist URL', async () => {
+    const ctx = ctxWith({
+      [`${MIRROR}/`]: fixture('home-nfl.html'),
+      // Serve the server-2 page as the landing page so it is the active source.
+      [`${MIRROR}${NFL}`]: fixture('game-nfl-server2.html'),
+      'https://xyzstreams.st/embed?nfl6': fixture('embed-xyzstreams.html'),
+      'https://us2-hlss2.b-cdn.net/api/token': { status: 503, body: 'down' },
+      'https://hlss2.b-cdn.net/api/token': fixture('xyzstreams-token.json'),
+    });
+    const candidates = await plugin.provider!.getStreams(ramsEagles, ctx);
+    const xyz = candidates.find((c) => c.label === 'Streameast Server 2');
+    expect(xyz?.url).toMatch(/^https:\/\/hlss2\.b-cdn\.net\/nfl6\/mono\.ts\.m3u8\?token=[0-9a-f]{32}&server=1$/);
+    expect(xyz?.headers?.Referer).toBe('https://xyzstreams.st/');
+  });
+});

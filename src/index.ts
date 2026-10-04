@@ -8,11 +8,14 @@ import {
 } from '@clutch/plugin-sdk';
 import {
   decodeEvalBlobs,
+  decryptXyzToken,
   findIframeSrc,
   findM3u8,
   parseMatches,
   parseSources,
+  parseXyzEmbed,
   type Match,
+  type XyzEmbed,
 } from './parse';
 
 const DEFAULT_MIRROR = 'https://v2.streameast.ch';
@@ -87,6 +90,28 @@ function pickMatch(game: Game, matches: Match[]): { match: Match; confidence: nu
   return { match, confidence: Math.min(best.confidence, ESPN_ID_CONFIDENCE - 0.1) };
 }
 
+/** First xyzstreams host whose token endpoint answers; the token rides as `?token=`. */
+async function resolveXyz(
+  ctx: PluginContext,
+  xyz: XyzEmbed,
+  page: string,
+): Promise<{ url: string; page: string } | undefined> {
+  for (const server of xyz.servers) {
+    try {
+      const r = await ctx.fetch(server.token, { headers: { 'User-Agent': UA, Referer: page } });
+      if (!r.ok) continue;
+      const data = (await r.json()) as { iv?: unknown; token?: unknown };
+      if (typeof data.iv !== 'string' || typeof data.token !== 'string') continue;
+      const token = decryptXyzToken(xyz.secret, data.iv, data.token);
+      if (!token) continue;
+      return { url: `${server.playlist}?token=${encodeURIComponent(token)}&server=1`, page };
+    } catch (error) {
+      ctx.log.debug('xyzstreams token failed', server.token, String(error));
+    }
+  }
+  return undefined;
+}
+
 /** Follow an embed through nested iframes and obfuscation to a playable HLS URL. */
 async function resolveEmbed(
   ctx: PluginContext,
@@ -103,6 +128,8 @@ async function resolveEmbed(
     }
     const page = response.url || url;
     const html = await response.text();
+    const xyz = parseXyzEmbed(html, page);
+    if (xyz) return resolveXyz(ctx, xyz, page);
     const direct = findM3u8(html) ?? decodeEvalBlobs(html).map(findM3u8).find(Boolean);
     if (direct) return { url: direct, page };
     const next = findIframeSrc(html, page);
