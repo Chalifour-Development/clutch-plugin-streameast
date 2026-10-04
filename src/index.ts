@@ -70,6 +70,16 @@ function titleOf(m: Match): string {
   return m.teams.length ? m.teams.join(' vs ') : m.path;
 }
 
+/**
+ * Whether a card can be this game's sport. Cards say `football/nfl`, `hockey/nhl`; Clutch
+ * sport ids are the league (`nfl`, `nhl`, `f1`). Cards without a path stay eligible.
+ */
+function sameSport(sport: string, m: Match): boolean {
+  if (!m.espnPath) return true;
+  const league = m.espnPath.split('/').pop()!.toLowerCase();
+  return league === sport.toLowerCase();
+}
+
 /** Best match for the game and how sure we are. */
 function pickMatch(game: Game, matches: Match[]): { match: Match; confidence: number } | undefined {
   // Clutch's ESPN-backed sports use `<sport>:<espnEventId>` ids, and every card carries one.
@@ -79,10 +89,14 @@ function pickMatch(game: Game, matches: Match[]): { match: Match; confidence: nu
 
   const start = Date.parse(game.startsAt);
   const nearby = matches.filter(
-    (m) => Number.isNaN(start) || Math.abs(m.startsAt * 1000 - start) <= MATCH_WINDOW_MS,
+    (m) =>
+      sameSport(game.sport, m) &&
+      (Number.isNaN(start) || Math.abs(m.startsAt * 1000 - start) <= MATCH_WINDOW_MS),
   );
   const channels: Channel[] = nearby.map((m) => ({ id: m.path, name: titleOf(m) }));
-  const best = matchGameToChannels(game, channels)[0];
+  // A one-team hit is how a finished Broncos @ 49ers matched the NBA's Denver Nuggets: a match
+  // listing is two named teams, so anything short of both is a different game.
+  const best = matchGameToChannels(game, channels).find((m) => m.reasons.includes('both-teams'));
   if (!best) return undefined;
   const match = nearby.find((m) => m.path === best.channel.id);
   if (!match) return undefined;

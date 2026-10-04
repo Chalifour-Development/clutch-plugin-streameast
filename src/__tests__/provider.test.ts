@@ -126,6 +126,31 @@ describe('streameast provider', () => {
     expect(candidates.map((c) => c.label)).toEqual(['Streameast Server 1']);
   });
 
+  it('never name-matches a game from another sport that shares a city', async () => {
+    // Seen live: Broncos @ 49ers (nfl) dropped off the list and "Denver" matched the NBA's
+    // Utah Jazz vs Denver Nuggets, so the app offered a basketball game.
+    const home = `<div class="m-card" data-espn-event-id="401914127" data-espn-path="basketball/nba" data-time="1790192700" data-team-names="Utah Jazz|Denver Nuggets"><a class="m-card__link" href="/nba/utah-jazz-vs-denver-nuggets-2/"></a></div>`;
+    const ctx = ctxWith({ ...LIVE_RESPONSES, [`${MIRROR}/`]: home, [`${MIRROR}/nba/utah-jazz-vs-denver-nuggets-2/`]: fixture('game-server1.html') });
+    const broncos: Game = {
+      ...twinsGiants,
+      id: 'nfl:401872975',
+      sport: 'nfl',
+      title: 'Broncos @ 49ers',
+      startsAt: new Date((1790192700 - 3600) * 1000).toISOString(),
+      competitors: [
+        { ...team('nfl', 'Denver Broncos', 'Broncos', 'DEN'), aliases: ['Denver'] },
+        { ...team('nfl', 'San Francisco 49ers', '49ers', 'SF'), aliases: ['San Francisco'] },
+      ],
+    };
+    expect(await plugin.provider!.getStreams(broncos, ctx)).toEqual([]);
+  });
+
+  it('does not name-match on one team alone', async () => {
+    const home = `<div class="m-card" data-espn-path="baseball/mlb" data-time="1790192700" data-team-names="Minnesota Twins|Chicago Cubs"><a class="m-card__link" href="/mlb/twins-cubs/"></a></div>`;
+    const ctx = ctxWith({ ...LIVE_RESPONSES, [`${MIRROR}/`]: home, [`${MIRROR}/mlb/twins-cubs/`]: fixture('game-server1.html') });
+    expect(await plugin.provider!.getStreams({ ...twinsGiants, id: 'mlb:other' }, ctx)).toEqual([]);
+  });
+
   it.each(['final', 'cancelled', 'postponed'] as const)(
     'returns nothing for a %s game, whose channel streameast reuses for another match',
     async (status) => {
