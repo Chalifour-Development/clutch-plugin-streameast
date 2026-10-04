@@ -26,12 +26,20 @@ Current mirrors are listed at https://v5.gostreameast.link/.
    (confidence 0.9). If there is no id, it matches on team names within 12 hours of kickoff.
 2. It opens the match page and resolves up to 3 free servers in parallel. Premium servers are
    skipped.
-3. It follows each server's embed (nested iframes, plus the XOR `eval` obfuscation some embeds
-   use) to the signed `.m3u8`, and returns it as an HLS stream with the `User-Agent`, `Referer`
+3. It follows each server's embed (nested iframes, the XOR `eval` obfuscation some embeds use,
+   and xyzstreams' AES-encrypted tokens) to the signed `.m3u8`, and returns it as an HLS stream with the `User-Agent`, `Referer`
    and `Origin` headers the CDN checks.
 
 Streams show up from one hour before start, when Streameast opens the player. Signed URLs expire
 after a few hours, so they are resolved fresh each time you open a game.
+
+## Verified
+
+On 2026-10-04 the plugin was installed from this repo into the Clutch Android build on an Android
+16 emulator. All three embed families played live video in ExoPlayer: streame.center
+(NHL Jets @ Red Wings and NFL Cowboys @ Texans), xyzstreams, and flyembed (both on Cowboys @
+Texans). Matches marked premium-only on Streameast have no free server, so the plugin returns no
+streams for them.
 
 ## What it connects to
 
