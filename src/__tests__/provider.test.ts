@@ -126,6 +126,15 @@ describe('streameast provider', () => {
     expect(candidates.map((c) => c.label)).toEqual(['Streameast Server 1']);
   });
 
+  it.each(['final', 'cancelled', 'postponed'] as const)(
+    'returns nothing for a %s game, whose channel streameast reuses for another match',
+    async (status) => {
+      const ctx = ctxWith(LIVE_RESPONSES);
+      expect(await plugin.provider!.getStreams({ ...twinsGiants, status }, ctx)).toEqual([]);
+      expect(ctx.calls).toHaveLength(0);
+    },
+  );
+
   it('caches the match list between games', async () => {
     const ctx = ctxWith(LIVE_RESPONSES);
     await plugin.provider!.getStreams(twinsGiants, ctx);

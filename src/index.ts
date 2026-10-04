@@ -143,6 +143,12 @@ async function resolveEmbed(
 export default definePlugin({
   provider: {
     async getStreams(game, ctx): Promise<StreamCandidate[]> {
+      // Streameast keeps listing a game after it ends while reusing its channel for the next
+      // match (seen: a final Broncos @ 49ers page streaming Chiefs @ Raiders). It is live-only,
+      // so an ended or called-off game can only ever yield the wrong broadcast.
+      if (game.status === 'final' || game.status === 'cancelled' || game.status === 'postponed') {
+        return [];
+      }
       const mirror = mirrorOf(ctx);
       const picked = pickMatch(game, await loadMatches(ctx, mirror));
       if (!picked) return [];
