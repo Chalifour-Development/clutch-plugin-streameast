@@ -29,6 +29,7 @@ const MAX_SERVERS = 3;
 const MAX_EMBED_HOPS = 4;
 const MATCH_WINDOW_MS = 12 * 3_600_000;
 const ESPN_ID_CONFIDENCE = 0.9;
+const PROBE_TIMEOUT_MS = 5_000;
 
 function mirrorOf(ctx: PluginContext): string {
   const raw = ctx.settings.mirrorUrl;
@@ -102,6 +103,31 @@ function pickMatch(game: Game, matches: Match[]): { match: Match; confidence: nu
   if (!match) return undefined;
   // Capped below the exact-id confidence: a name match is a weaker signal.
   return { match, confidence: Math.min(best.confidence, ESPN_ID_CONFIDENCE - 0.1) };
+}
+
+/**
+ * Whether the playlist answers as HLS with the headers the player will send. Streameast's CDNs
+ * come and go per network (edgestream*.pro stopped answering mid-game), and a player handed a
+ * URL that never connects shows a black screen instead of failing over, so dead servers must
+ * never reach the app. Bounded by the host's fetch timeout and run in parallel per server.
+ */
+async function playlistLoads(
+  ctx: PluginContext,
+  url: string,
+  headers: Record<string, string>,
+): Promise<boolean> {
+  const probe = (async () => {
+    try {
+      const r = await ctx.fetch(url, { headers });
+      return r.ok && (await r.text()).trimStart().startsWith('#EXTM3U');
+    } catch {
+      return false;
+    }
+  })();
+  // The host fetch has no timeout and a dead CDN hangs rather than refusing; cap it so one
+  // dead server cannot push the whole call past the app's provider deadline.
+  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), PROBE_TIMEOUT_MS));
+  return Promise.race([probe, timeout]);
 }
 
 /** First xyzstreams host whose token endpoint answers; the token rides as `?token=`. */
@@ -199,13 +225,18 @@ export default definePlugin({
               return undefined;
             }
             const origin = originOf(resolved.page);
+            const headers = { 'User-Agent': UA, Referer: `${origin}/`, Origin: origin };
+            if (!(await playlistLoads(ctx, resolved.url, headers))) {
+              ctx.log.info(server.name, 'playlist did not load; skipping', resolved.url);
+              return undefined;
+            }
             return {
               url: resolved.url,
               kind: 'hls',
               label: `Streameast ${server.name}`,
               providerId: ctx.pluginId,
               confidence,
-              headers: { 'User-Agent': UA, Referer: `${origin}/`, Origin: origin },
+              headers,
               meta: { match: match.path, server: server.index },
             };
           } catch (error) {

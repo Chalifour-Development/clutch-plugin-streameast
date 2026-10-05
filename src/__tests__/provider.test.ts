@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createTestContext, type Game } from '@clutch/plugin-sdk';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import plugin from '../index';
 
 const fixture = (name: string) => readFileSync(join(__dirname, '../__fixtures__', name), 'utf8');
@@ -41,8 +41,17 @@ const twinsGiants: Game = {
   keywords: ['MLB', 'baseball'],
 };
 
+const PLAYLIST = '#EXTM3U\n#EXT-X-TARGETDURATION:4\nseg.ts\n';
+
+/** Canned site responses; any .m3u8 the plugin probes answers as a live playlist. */
 function ctxWith(responses: Record<string, string | { status?: number; body: string }>, settings = {}) {
-  return createTestContext({ pluginId: 'dev.chalifour.streameast', settings, responses });
+  const ctx = createTestContext({ pluginId: 'dev.chalifour.streameast', settings, responses });
+  const canned = ctx.fetch;
+  ctx.fetch = (async (url: string, init?: never) =>
+    /\.m3u8(\?|$)/.test(url) && !(url in responses)
+      ? createTestContext({ responses: { [url]: PLAYLIST } }).fetch(url)
+      : canned(url, init)) as typeof ctx.fetch;
+  return ctx;
 }
 
 describe('streameast provider', () => {
@@ -159,6 +168,43 @@ describe('streameast provider', () => {
       expect(ctx.calls).toHaveLength(0);
     },
   );
+
+  it('drops a server whose playlist cannot be loaded, so the app never opens a dead stream', async () => {
+    // Seen live: Server 1's CDN (edgestream*.pro) stopped answering from the device, and the
+    // player sat on a black screen because a hung connection never raises an error.
+    const ctx = ctxWith(LIVE_RESPONSES);
+    ctx.fetch = (async (url: string, init?: never) => {
+      if (url.includes('edgestream')) throw new Error('timeout');
+      if (url.endsWith('.m3u8')) return createTestContext({ responses: { [url]: '#EXTM3U\n#EXT-X-TARGETDURATION:4\nseg.ts\n' } }).fetch(url);
+      return createTestContext({ responses: LIVE_RESPONSES }).fetch(url, init);
+    }) as typeof ctx.fetch;
+    const candidates = await plugin.provider!.getStreams(twinsGiants, ctx);
+    expect(candidates.map((c) => c.label)).toEqual(['Streameast Server 2']);
+  });
+
+  it('gives up on a playlist that hangs instead of stalling every server', async () => {
+    vi.useFakeTimers();
+    try {
+      const ctx = ctxWith(LIVE_RESPONSES);
+      const inner = ctx.fetch;
+      ctx.fetch = ((url: string, init?: never) =>
+        url.includes('edgestream') && url.includes('.m3u8') ? new Promise(() => {}) : inner(url, init)) as typeof ctx.fetch;
+      const pending = plugin.provider!.getStreams(twinsGiants, ctx);
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect((await pending).map((c) => c.label)).toEqual(['Streameast Server 2']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops a server whose playlist is not HLS', async () => {
+    const ctx = ctxWith(LIVE_RESPONSES);
+    ctx.fetch = (async (url: string, init?: never) => {
+      if (url.includes('.m3u8')) return createTestContext({ responses: { [url]: { status: 403, body: 'Forbidden' } } }).fetch(url);
+      return createTestContext({ responses: LIVE_RESPONSES }).fetch(url, init);
+    }) as typeof ctx.fetch;
+    expect(await plugin.provider!.getStreams(twinsGiants, ctx)).toEqual([]);
+  });
 
   it('caches the match list between games', async () => {
     const ctx = ctxWith(LIVE_RESPONSES);
