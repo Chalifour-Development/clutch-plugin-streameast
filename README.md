@@ -41,6 +41,17 @@ On 2026-10-04 the plugin was installed from this repo into the Clutch Android bu
 Texans). Matches marked premium-only on Streameast have no free server, so the plugin returns no
 streams for them.
 
+On 2026-10-04 (evening) the NFL slate was rechecked live on the same emulator with v1.1.3. Lions
+@ Panthers played through the Watch button (NBC SNF feed). Fixes from that run:
+
+- 1.1.1: no streams for final, cancelled or postponed games. Streameast reuses a finished
+  game's channel for the next match (a final Broncos @ 49ers served Chiefs @ Raiders).
+- 1.1.2: name matching requires the same sport and both teams (Broncos once matched the NBA's
+  Denver Nuggets).
+- 1.1.3: each server's playlist is loaded before it is offered, capped at 5 s. When the
+  edgestream CDN stopped answering, the app had been showing a black screen instead of failing
+  over.
+
 ## What it connects to
 
 Only the mirror you configure, the embed hosts that the mirror's pages point at, and their CDNs.
