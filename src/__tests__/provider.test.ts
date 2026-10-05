@@ -197,6 +197,23 @@ describe('streameast provider', () => {
     }
   });
 
+  it('returns the servers that resolved before the deadline instead of timing out entirely', async () => {
+    // Seen on the emulator: a slow embed chain pushed getStreams past the app's 15 s limit, so
+    // the app showed "No streams found" even though one server had already resolved.
+    vi.useFakeTimers();
+    try {
+      const ctx = ctxWith(LIVE_RESPONSES);
+      const inner = ctx.fetch;
+      ctx.fetch = ((url: string, init?: never) =>
+        url.startsWith('https://flyembed.click/') ? new Promise(() => {}) : inner(url, init)) as typeof ctx.fetch;
+      const pending = plugin.provider!.getStreams(twinsGiants, ctx);
+      await vi.advanceTimersByTimeAsync(12_500);
+      expect((await pending).map((c) => c.label)).toEqual(['Streameast Server 1']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('drops a server whose playlist is not HLS', async () => {
     const ctx = ctxWith(LIVE_RESPONSES);
     ctx.fetch = (async (url: string, init?: never) => {

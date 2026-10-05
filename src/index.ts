@@ -30,6 +30,12 @@ const MAX_EMBED_HOPS = 4;
 const MATCH_WINDOW_MS = 12 * 3_600_000;
 const ESPN_ID_CONFIDENCE = 0.9;
 const PROBE_TIMEOUT_MS = 5_000;
+/** Below the app's 15 s provider timeout, leaving room for the sandbox round trip. */
+const STREAMS_BUDGET_MS = 12_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function mirrorOf(ctx: PluginContext): string {
   const raw = ctx.settings.mirrorUrl;
@@ -45,7 +51,11 @@ async function loadMatches(ctx: PluginContext, mirror: string): Promise<Match[]>
   const raw = await ctx.storage.get(CACHE_KEY);
   if (raw) {
     try {
-      const cached = JSON.parse(raw) as { mirror: string; fetchedAt: number; matches: Match[] };
+      const cached = JSON.parse(raw) as {
+        mirror: string;
+        fetchedAt: number;
+        matches: Match[];
+      };
       if (cached.mirror === mirror && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
         return cached.matches;
       }
@@ -94,7 +104,10 @@ function pickMatch(game: Game, matches: Match[]): { match: Match; confidence: nu
       sameSport(game.sport, m) &&
       (Number.isNaN(start) || Math.abs(m.startsAt * 1000 - start) <= MATCH_WINDOW_MS),
   );
-  const channels: Channel[] = nearby.map((m) => ({ id: m.path, name: titleOf(m) }));
+  const channels: Channel[] = nearby.map((m) => ({
+    id: m.path,
+    name: titleOf(m),
+  }));
   // A one-team hit is how a finished Broncos @ 49ers matched the NBA's Denver Nuggets: a match
   // listing is two named teams, so anything short of both is a different game.
   const best = matchGameToChannels(game, channels).find((m) => m.reasons.includes('both-teams'));
@@ -102,7 +115,10 @@ function pickMatch(game: Game, matches: Match[]): { match: Match; confidence: nu
   const match = nearby.find((m) => m.path === best.channel.id);
   if (!match) return undefined;
   // Capped below the exact-id confidence: a name match is a weaker signal.
-  return { match, confidence: Math.min(best.confidence, ESPN_ID_CONFIDENCE - 0.1) };
+  return {
+    match,
+    confidence: Math.min(best.confidence, ESPN_ID_CONFIDENCE - 0.1),
+  };
 }
 
 /**
@@ -126,7 +142,7 @@ async function playlistLoads(
   })();
   // The host fetch has no timeout and a dead CDN hangs rather than refusing; cap it so one
   // dead server cannot push the whole call past the app's provider deadline.
-  const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), PROBE_TIMEOUT_MS));
+  const timeout = sleep(PROBE_TIMEOUT_MS).then(() => false);
   return Promise.race([probe, timeout]);
 }
 
@@ -138,13 +154,18 @@ async function resolveXyz(
 ): Promise<{ url: string; page: string } | undefined> {
   for (const server of xyz.servers) {
     try {
-      const r = await ctx.fetch(server.token, { headers: { 'User-Agent': UA, Referer: page } });
+      const r = await ctx.fetch(server.token, {
+        headers: { 'User-Agent': UA, Referer: page },
+      });
       if (!r.ok) continue;
       const data = (await r.json()) as { iv?: unknown; token?: unknown };
       if (typeof data.iv !== 'string' || typeof data.token !== 'string') continue;
       const token = decryptXyzToken(xyz.secret, data.iv, data.token);
       if (!token) continue;
-      return { url: `${server.playlist}?token=${encodeURIComponent(token)}&server=1`, page };
+      return {
+        url: `${server.playlist}?token=${encodeURIComponent(token)}&server=1`,
+        page,
+      };
     } catch (error) {
       ctx.log.debug('xyzstreams token failed', server.token, String(error));
     }
@@ -161,7 +182,9 @@ async function resolveEmbed(
   let url = embedUrl;
   let ref = referer;
   for (let hop = 0; hop < MAX_EMBED_HOPS; hop++) {
-    const response = await ctx.fetch(url, { headers: { 'User-Agent': UA, Referer: ref } });
+    const response = await ctx.fetch(url, {
+      headers: { 'User-Agent': UA, Referer: ref },
+    });
     if (!response.ok) {
       ctx.log.debug('Embed', url, 'answered', response.status);
       return undefined;
@@ -183,6 +206,7 @@ async function resolveEmbed(
 export default definePlugin({
   provider: {
     async getStreams(game, ctx): Promise<StreamCandidate[]> {
+      const deadline = sleep(STREAMS_BUDGET_MS);
       // Streameast keeps listing a game after it ends while reusing its channel for the next
       // match (seen: a final Broncos @ 49ers page streaming Chiefs @ Raiders). It is live-only,
       // so an ended or called-off game can only ever yield the wrong broadcast.
@@ -209,43 +233,58 @@ export default definePlugin({
       const servers = page.free.length
         ? page.free.slice(0, MAX_SERVERS)
         : [{ index: 1, name: 'Server 1', path: match.path }];
-      // Servers are independent: resolve them in parallel to stay inside the 15 s budget.
+      // The app abandons the whole call at 15 s and shows nothing, so each server races a shared
+      // deadline: servers that resolved in time are returned, slow ones are dropped.
       const results = await Promise.all(
-        servers.map(async (server): Promise<StreamCandidate | undefined> => {
-          try {
-            let iframe = page.iframe;
-            if (page.free.length && server.index !== (page.activeIndex ?? 1)) {
-              const r = await ctx.fetch(mirror + server.path, { headers: SITE_HEADERS });
-              iframe = r.ok ? parseSources(await r.text()).iframe : undefined;
-            }
-            if (!iframe) return undefined;
-            const resolved = await resolveEmbed(ctx, iframe, `${mirror}/`);
-            if (!resolved) {
-              ctx.log.info('Could not read', server.name, 'embed', iframe);
-              return undefined;
-            }
-            const origin = originOf(resolved.page);
-            const headers = { 'User-Agent': UA, Referer: `${origin}/`, Origin: origin };
-            if (!(await playlistLoads(ctx, resolved.url, headers))) {
-              ctx.log.info(server.name, 'playlist did not load; skipping', resolved.url);
-              return undefined;
-            }
-            return {
-              url: resolved.url,
-              kind: 'hls',
-              label: `Streameast ${server.name}`,
-              providerId: ctx.pluginId,
-              confidence,
-              headers,
-              meta: { match: match.path, server: server.index },
-            };
-          } catch (error) {
-            ctx.log.warn(server.name, 'failed:', String(error));
-            return undefined;
-          }
-        }),
+        servers.map((server) =>
+          Promise.race([resolveServer(server), deadline.then(() => undefined)]),
+        ),
       );
       return results.filter((c): c is StreamCandidate => c !== undefined);
+
+      async function resolveServer(server: {
+        index: number;
+        name: string;
+        path: string;
+      }): Promise<StreamCandidate | undefined> {
+        try {
+          let iframe = page.iframe;
+          if (page.free.length && server.index !== (page.activeIndex ?? 1)) {
+            const r = await ctx.fetch(mirror + server.path, {
+              headers: SITE_HEADERS,
+            });
+            iframe = r.ok ? parseSources(await r.text()).iframe : undefined;
+          }
+          if (!iframe) return undefined;
+          const resolved = await resolveEmbed(ctx, iframe, `${mirror}/`);
+          if (!resolved) {
+            ctx.log.info('Could not read', server.name, 'embed', iframe);
+            return undefined;
+          }
+          const origin = originOf(resolved.page);
+          const headers = {
+            'User-Agent': UA,
+            Referer: `${origin}/`,
+            Origin: origin,
+          };
+          if (!(await playlistLoads(ctx, resolved.url, headers))) {
+            ctx.log.info(server.name, 'playlist did not load; skipping', resolved.url);
+            return undefined;
+          }
+          return {
+            url: resolved.url,
+            kind: 'hls',
+            label: `Streameast ${server.name}`,
+            providerId: ctx.pluginId,
+            confidence,
+            headers,
+            meta: { match: match.path, server: server.index },
+          };
+        } catch (error) {
+          ctx.log.warn(server.name, 'failed:', String(error));
+          return undefined;
+        }
+      }
     },
 
     async getChannels(ctx): Promise<Channel[]> {
