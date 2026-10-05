@@ -121,6 +121,28 @@ function pickMatch(game: Game, matches: Match[]): { match: Match; confidence: nu
   };
 }
 
+/** Resolve a playlist entry against the playlist URL (QuickJS has no URL class). */
+function resolveUrl(base: string, ref: string): string {
+  if (/^https?:\/\//.test(ref)) return ref;
+  if (ref.startsWith('//')) return `https:${ref}`;
+  if (ref.startsWith('/')) return originOf(base) + ref;
+  return base.replace(/[?#].*$/, '').replace(/[^/]*$/, '') + ref;
+}
+
+/**
+ * Whether a segment's first bytes are something ExoPlayer plays. Seen: raw MPEG-TS, and TS behind
+ * a fake 42-byte WebP header (both play), versus gzipped TS packed into PNG pixels that only
+ * the site's own JS can unpack (ExoPlayer: "Cannot find sync byte"). Bodies cross the bridge
+ * as text, so binary is mangled: match the leading signature, which survives decoding, rather
+ * than TS packet spacing, which does not.
+ */
+function segmentPlayable(head: string): boolean {
+  const start = head.slice(0, 8);
+  if (/^.?PNG/.test(start)) return false;
+  if (/^\s*</.test(start)) return false;
+  return head.length > 0;
+}
+
 /**
  * Whether the playlist answers as HLS with the headers the player will send. Streameast's CDNs
  * come and go per network (edgestream*.pro stopped answering mid-game), and a player handed a
@@ -135,7 +157,19 @@ async function playlistLoads(
   const probe = (async () => {
     try {
       const r = await ctx.fetch(url, { headers });
-      return r.ok && (await r.text()).trimStart().startsWith('#EXTM3U');
+      const playlist = r.ok ? await r.text() : '';
+      if (!playlist.trimStart().startsWith('#EXTM3U')) return false;
+      // A master playlist lists variants, not segments; the variants share a CDN, so accept it.
+      if (playlist.includes('#EXT-X-STREAM-INF')) return true;
+      const segment = playlist
+        .split('\n')
+        .map((l) => l.trim())
+        .find((l) => l && !l.startsWith('#'));
+      if (!segment) return false;
+      const head = await ctx.fetch(resolveUrl(url, segment), {
+        headers: { ...headers, Range: 'bytes=0-4095' },
+      });
+      return head.ok && segmentPlayable(await head.text());
     } catch {
       return false;
     }

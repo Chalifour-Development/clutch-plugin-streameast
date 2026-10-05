@@ -42,15 +42,25 @@ const twinsGiants: Game = {
 };
 
 const PLAYLIST = '#EXTM3U\n#EXT-X-TARGETDURATION:4\nseg.ts\n';
+/** A real segment head: MPEG-TS behind a fake 42-byte WebP header, which ExoPlayer plays. */
+const TS_HEAD = readFileSync(
+  join(__dirname, '../__fixtures__', 'segment-head-webp-ts.bin'),
+  'latin1',
+);
 
 /** Canned site responses; any .m3u8 the plugin probes answers as a live playlist. */
-function ctxWith(responses: Record<string, string | { status?: number; body: string }>, settings = {}) {
+function ctxWith(
+  responses: Record<string, string | { status?: number; body: string }>,
+  settings = {},
+) {
   const ctx = createTestContext({ pluginId: 'dev.chalifour.streameast', settings, responses });
   const canned = ctx.fetch;
   ctx.fetch = (async (url: string, init?: never) =>
     /\.m3u8(\?|$)/.test(url) && !(url in responses)
       ? createTestContext({ responses: { [url]: PLAYLIST } }).fetch(url)
-      : canned(url, init)) as typeof ctx.fetch;
+      : /\/seg\.ts$/.test(url) && !(url in responses)
+        ? createTestContext({ responses: { [url]: TS_HEAD } }).fetch(url)
+        : canned(url, init)) as typeof ctx.fetch;
   return ctx;
 }
 
@@ -59,10 +69,7 @@ describe('streameast provider', () => {
     const ctx = ctxWith(LIVE_RESPONSES);
     const candidates = await plugin.provider!.getStreams(twinsGiants, ctx);
 
-    expect(candidates.map((c) => c.label)).toEqual([
-      'Streameast Server 1',
-      'Streameast Server 2',
-    ]);
+    expect(candidates.map((c) => c.label)).toEqual(['Streameast Server 1', 'Streameast Server 2']);
     const [s1, s2] = candidates;
     expect(s1).toMatchObject({
       kind: 'hls',
@@ -130,7 +137,10 @@ describe('streameast provider', () => {
   });
 
   it('skips a server whose embed cannot be read and keeps the others', async () => {
-    const ctx = ctxWith({ ...LIVE_RESPONSES, 'https://flyembed.click/embed/17.php': '<html></html>' });
+    const ctx = ctxWith({
+      ...LIVE_RESPONSES,
+      'https://flyembed.click/embed/17.php': '<html></html>',
+    });
     const candidates = await plugin.provider!.getStreams(twinsGiants, ctx);
     expect(candidates.map((c) => c.label)).toEqual(['Streameast Server 1']);
   });
@@ -139,7 +149,11 @@ describe('streameast provider', () => {
     // Seen live: Broncos @ 49ers (nfl) dropped off the list and "Denver" matched the NBA's
     // Utah Jazz vs Denver Nuggets, so the app offered a basketball game.
     const home = `<div class="m-card" data-espn-event-id="401914127" data-espn-path="basketball/nba" data-time="1790192700" data-team-names="Utah Jazz|Denver Nuggets"><a class="m-card__link" href="/nba/utah-jazz-vs-denver-nuggets-2/"></a></div>`;
-    const ctx = ctxWith({ ...LIVE_RESPONSES, [`${MIRROR}/`]: home, [`${MIRROR}/nba/utah-jazz-vs-denver-nuggets-2/`]: fixture('game-server1.html') });
+    const ctx = ctxWith({
+      ...LIVE_RESPONSES,
+      [`${MIRROR}/`]: home,
+      [`${MIRROR}/nba/utah-jazz-vs-denver-nuggets-2/`]: fixture('game-server1.html'),
+    });
     const broncos: Game = {
       ...twinsGiants,
       id: 'nfl:401872975',
@@ -156,7 +170,11 @@ describe('streameast provider', () => {
 
   it('does not name-match on one team alone', async () => {
     const home = `<div class="m-card" data-espn-path="baseball/mlb" data-time="1790192700" data-team-names="Minnesota Twins|Chicago Cubs"><a class="m-card__link" href="/mlb/twins-cubs/"></a></div>`;
-    const ctx = ctxWith({ ...LIVE_RESPONSES, [`${MIRROR}/`]: home, [`${MIRROR}/mlb/twins-cubs/`]: fixture('game-server1.html') });
+    const ctx = ctxWith({
+      ...LIVE_RESPONSES,
+      [`${MIRROR}/`]: home,
+      [`${MIRROR}/mlb/twins-cubs/`]: fixture('game-server1.html'),
+    });
     expect(await plugin.provider!.getStreams({ ...twinsGiants, id: 'mlb:other' }, ctx)).toEqual([]);
   });
 
@@ -173,10 +191,10 @@ describe('streameast provider', () => {
     // Seen live: Server 1's CDN (edgestream*.pro) stopped answering from the device, and the
     // player sat on a black screen because a hung connection never raises an error.
     const ctx = ctxWith(LIVE_RESPONSES);
+    const inner = ctx.fetch;
     ctx.fetch = (async (url: string, init?: never) => {
       if (url.includes('edgestream')) throw new Error('timeout');
-      if (url.endsWith('.m3u8')) return createTestContext({ responses: { [url]: '#EXTM3U\n#EXT-X-TARGETDURATION:4\nseg.ts\n' } }).fetch(url);
-      return createTestContext({ responses: LIVE_RESPONSES }).fetch(url, init);
+      return inner(url, init);
     }) as typeof ctx.fetch;
     const candidates = await plugin.provider!.getStreams(twinsGiants, ctx);
     expect(candidates.map((c) => c.label)).toEqual(['Streameast Server 2']);
@@ -188,7 +206,9 @@ describe('streameast provider', () => {
       const ctx = ctxWith(LIVE_RESPONSES);
       const inner = ctx.fetch;
       ctx.fetch = ((url: string, init?: never) =>
-        url.includes('edgestream') && url.includes('.m3u8') ? new Promise(() => {}) : inner(url, init)) as typeof ctx.fetch;
+        url.includes('edgestream') && url.includes('.m3u8')
+          ? new Promise(() => {})
+          : inner(url, init)) as typeof ctx.fetch;
       const pending = plugin.provider!.getStreams(twinsGiants, ctx);
       await vi.advanceTimersByTimeAsync(6_000);
       expect((await pending).map((c) => c.label)).toEqual(['Streameast Server 2']);
@@ -205,7 +225,9 @@ describe('streameast provider', () => {
       const ctx = ctxWith(LIVE_RESPONSES);
       const inner = ctx.fetch;
       ctx.fetch = ((url: string, init?: never) =>
-        url.startsWith('https://flyembed.click/') ? new Promise(() => {}) : inner(url, init)) as typeof ctx.fetch;
+        url.startsWith('https://flyembed.click/')
+          ? new Promise(() => {})
+          : inner(url, init)) as typeof ctx.fetch;
       const pending = plugin.provider!.getStreams(twinsGiants, ctx);
       await vi.advanceTimersByTimeAsync(12_500);
       expect((await pending).map((c) => c.label)).toEqual(['Streameast Server 1']);
@@ -214,10 +236,30 @@ describe('streameast provider', () => {
     }
   });
 
+  it('drops a server whose segments are not MPEG-TS, such as video packed into PNG pixels', async () => {
+    // Seen live on NHL games: dlive.sx/dembed.top hides gzipped TS inside PNG pixel data and
+    // unpacks it in browser JS. ExoPlayer fails with "Cannot find sync byte" on a black screen.
+    const png = readFileSync(
+      join(__dirname, '../__fixtures__', 'segment-head-png-pixels.bin'),
+      'latin1',
+    );
+    const ctx = ctxWith(LIVE_RESPONSES);
+    const inner = ctx.fetch;
+    ctx.fetch = ((url: string, init?: never) =>
+      url.includes('edgestream') && !url.includes('.m3u8')
+        ? createTestContext({ responses: { [url]: png } }).fetch(url)
+        : inner(url, init)) as typeof ctx.fetch;
+    const candidates = await plugin.provider!.getStreams(twinsGiants, ctx);
+    expect(candidates.map((c) => c.label)).toEqual(['Streameast Server 2']);
+  });
+
   it('drops a server whose playlist is not HLS', async () => {
     const ctx = ctxWith(LIVE_RESPONSES);
     ctx.fetch = (async (url: string, init?: never) => {
-      if (url.includes('.m3u8')) return createTestContext({ responses: { [url]: { status: 403, body: 'Forbidden' } } }).fetch(url);
+      if (url.includes('.m3u8'))
+        return createTestContext({
+          responses: { [url]: { status: 403, body: 'Forbidden' } },
+        }).fetch(url);
       return createTestContext({ responses: LIVE_RESPONSES }).fetch(url, init);
     }) as typeof ctx.fetch;
     expect(await plugin.provider!.getStreams(twinsGiants, ctx)).toEqual([]);
@@ -234,7 +276,9 @@ describe('streameast provider', () => {
   it('uses the configured mirror, tolerating a trailing slash', async () => {
     const other = 'https://v2.thestreameast.su';
     const ctx = ctxWith(
-      Object.fromEntries(Object.entries(LIVE_RESPONSES).map(([k, v]) => [k.replace(MIRROR, other), v])),
+      Object.fromEntries(
+        Object.entries(LIVE_RESPONSES).map(([k, v]) => [k.replace(MIRROR, other), v]),
+      ),
       { mirrorUrl: `${other}/` },
     );
     expect(await plugin.provider!.getStreams(twinsGiants, ctx)).toHaveLength(2);
@@ -255,7 +299,13 @@ describe('streameast provider', () => {
 
 describe('xyzstreams servers', () => {
   const NFL = '/nfl/los-angeles-rams-vs-philadelphia-eagles/';
-  const ramsEagles: Game = { ...twinsGiants, id: 'nfl:401872970', sport: 'nfl', title: 'Eagles @ Rams', competitors: [] };
+  const ramsEagles: Game = {
+    ...twinsGiants,
+    id: 'nfl:401872970',
+    sport: 'nfl',
+    title: 'Eagles @ Rams',
+    competitors: [],
+  };
 
   it('decrypts the token from the first working host into a tokenized playlist URL', async () => {
     const ctx = ctxWith({
@@ -268,7 +318,9 @@ describe('xyzstreams servers', () => {
     });
     const candidates = await plugin.provider!.getStreams(ramsEagles, ctx);
     const xyz = candidates.find((c) => c.label === 'Streameast Server 2');
-    expect(xyz?.url).toMatch(/^https:\/\/hlss2\.b-cdn\.net\/nfl6\/mono\.ts\.m3u8\?token=[0-9a-f]{32}&server=1$/);
+    expect(xyz?.url).toMatch(
+      /^https:\/\/hlss2\.b-cdn\.net\/nfl6\/mono\.ts\.m3u8\?token=[0-9a-f]{32}&server=1$/,
+    );
     expect(xyz?.headers?.Referer).toBe('https://xyzstreams.st/');
   });
 });
