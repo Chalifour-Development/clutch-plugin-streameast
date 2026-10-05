@@ -52,6 +52,17 @@ On 2026-10-04 (evening) the NFL slate was rechecked live on the same emulator wi
   edgestream CDN stopped answering, the app had been showing a black screen instead of failing
   over.
 
+On 2026-10-04 (late evening) the live NHL games (Panthers @ Ducks, Flames @ Kraken, Golden Knights
+@ Canucks) were checked with v1.1.5. None had a playable free server:
+
+- Server 1 (streame.center / edgestream*.pro): the CDN accepts TCP but never finishes TLS from
+  this network, on the Mac and the emulator alike.
+- Server 2 (dlive.sx / dembed.top / cowedd4855ws.sbs): segments are gzipped MPEG-TS packed into
+  PNG pixel data that only the site's JS unpacks. ExoPlayer fails with "Cannot find sync byte".
+- 1.1.4: servers race a 12 s budget, so one slow embed no longer times out the whole call.
+- 1.1.5: the plugin checks the first bytes of a segment and skips PNG-packed servers, so the app
+  shows "No streams found" instead of a black screen.
+
 ## What it connects to
 
 Only the mirror you configure, the embed hosts that the mirror's pages point at, and their CDNs.
