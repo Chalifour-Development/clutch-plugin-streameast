@@ -124,10 +124,35 @@ function unescapeJs(s: string): string {
     .replace(/\\\//g, '/');
 }
 
+const M3U8_RE = /https?:(?:\\?\/){2}[^"'`\s<>]+?\.m3u8(?:\?[^"'`\s<>]*)?(?=["'`\s<>]|$)/g;
+
+/** Every distinct absolute .m3u8 URL written as a literal in the text, in order. */
+export function findAllM3u8(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(M3U8_RE)) {
+    const url = decodeEntities(unescapeJs(m[0]));
+    if (!out.includes(url)) out.push(url);
+  }
+  return out;
+}
+
 /** First absolute .m3u8 URL written as a literal in the text. */
 export function findM3u8(text: string): string | undefined {
-  const m = /https?:(?:\\?\/){2}[^"'`\s<>]+?\.m3u8(?:\?[^"'`\s<>]*)?(?=["'`\s<>]|$)/.exec(text);
-  return m ? decodeEntities(unescapeJs(m[0])) : undefined;
+  return findAllM3u8(text)[0];
+}
+
+/**
+ * Mirror origins listed on a Streameast mirror directory (gostreameast.link): every link to the
+ * root of a `*streameast.<tld>` host. The directory itself (gostreameast) is not a mirror.
+ */
+export function parseMirrorDirectory(html: string): string[] {
+  const out: string[] = [];
+  for (const m of html.matchAll(/href="(https:\/\/(?:[a-z0-9-]+\.)*(?:the)?streameast\.[a-z]{2,})\/?"/gi)) {
+    const origin = m[1]!.toLowerCase();
+    if (/gostreameast/.test(origin) || out.includes(origin)) continue;
+    out.push(origin);
+  }
+  return out;
 }
 
 /**
@@ -160,6 +185,8 @@ export interface XyzEmbed {
   streamId: string;
   secret: string;
   servers: XyzServer[];
+  /** The page's `&server=` query value; the hosts serve a stale playlist for any other. */
+  serverParam: string;
 }
 
 /**
@@ -180,7 +207,13 @@ export function parseXyzEmbed(html: string, pageUrl: string): XyzEmbed | undefin
       token: `${m[1]}/api/token`,
     });
   }
-  return servers.length ? { streamId, secret, servers } : undefined;
+  // Seen: `server=1` until October 2026, then `server=2`, with `server=1` left serving a
+  // day-old playlist whose segments answer 403. Read it from the page rather than guess.
+  const serverParam =
+    /encodeURIComponent\(\s*\w+\s*\)\s*\+\s*["']&server=(\d+)["']/.exec(html)?.[1] ??
+    /\?server=(\d+)["']/.exec(html)?.[1] ??
+    '2';
+  return servers.length ? { streamId, secret, servers, serverParam } : undefined;
 }
 
 export function decryptXyzToken(secret: string, ivHex: string, tokenHex: string): string {

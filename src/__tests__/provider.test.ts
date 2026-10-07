@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { createTestContext, type Game } from '@clutch/plugin-sdk';
 import { describe, expect, it, vi } from 'vitest';
 import plugin from '../index';
+import { KNOWN_MIRRORS } from '../mirrors';
 
 const fixture = (name: string) => readFileSync(join(__dirname, '../__fixtures__', name), 'utf8');
 
@@ -48,19 +49,34 @@ const TS_HEAD = readFileSync(
   'latin1',
 );
 
-/** Canned site responses; any .m3u8 the plugin probes answers as a live playlist. */
+const mirrorOf = (url: string) => KNOWN_MIRRORS.find((m) => url.startsWith(`${m}/`));
+
+/**
+ * Canned site responses; any .m3u8 the plugin probes answers as a live playlist. Responses
+ * keyed by MIRROR are served by every known mirror (they all serve the same site), except the
+ * mirrors in `down`, which answer 429.
+ */
 function ctxWith(
   responses: Record<string, string | { status?: number; body: string }>,
-  settings = {},
+  down: readonly string[] = [],
 ) {
-  const ctx = createTestContext({ pluginId: 'dev.chalifour.streameast', settings, responses });
+  const ctx = createTestContext({ pluginId: 'dev.chalifour.streameast', responses });
   const canned = ctx.fetch;
-  ctx.fetch = (async (url: string, init?: never) =>
-    /\.m3u8(\?|$)/.test(url) && !(url in responses)
+  ctx.fetch = (async (url: string, init?: never) => {
+    const mirror = mirrorOf(url);
+    if (mirror && (down.includes(mirror) || !(url in responses))) ctx.calls.push({ url, init });
+    if (mirror && down.includes(mirror)) {
+      return createTestContext({ responses: { [url]: { status: 429, body: 'error code: 1015' } } }).fetch(url);
+    }
+    if (mirror && !(url in responses)) {
+      return createTestContext({ responses }).fetch(MIRROR + url.slice(mirror.length), init);
+    }
+    return /\.m3u8(\?|$)/.test(url) && !(url in responses)
       ? createTestContext({ responses: { [url]: PLAYLIST } }).fetch(url)
       : /\/seg\.ts$/.test(url) && !(url in responses)
         ? createTestContext({ responses: { [url]: TS_HEAD } }).fetch(url)
-        : canned(url, init)) as typeof ctx.fetch;
+        : canned(url, init);
+  }) as typeof ctx.fetch;
   return ctx;
 }
 
@@ -84,7 +100,8 @@ describe('streameast provider', () => {
     expect(s2!.headers?.Referer).toBe('https://exmxbxe.cfd/');
 
     const first = ctx.calls[0]!;
-    expect(first.url).toBe(`${MIRROR}/`);
+    expect(mirrorOf(first.url)).toBeDefined();
+    expect(first.url).toMatch(/\/$/);
     expect(first.init?.headers?.Cookie).toBe('sso_checked=1');
   });
 
@@ -268,25 +285,42 @@ describe('streameast provider', () => {
   it('caches the match list between games', async () => {
     const ctx = ctxWith(LIVE_RESPONSES);
     await plugin.provider!.getStreams(twinsGiants, ctx);
-    const before = ctx.calls.filter((c) => c.url === `${MIRROR}/`).length;
+    const homepages = () => ctx.calls.filter((c) => mirrorOf(c.url) && c.url === `${mirrorOf(c.url)}/`).length;
+    const before = homepages();
     await plugin.provider!.getStreams(twinsGiants, ctx);
-    expect(ctx.calls.filter((c) => c.url === `${MIRROR}/`).length).toBe(before);
+    expect(homepages()).toBe(before);
   });
 
-  it('uses the configured mirror, tolerating a trailing slash', async () => {
-    const other = 'https://v2.thestreameast.su';
-    const ctx = ctxWith(
-      Object.fromEntries(
-        Object.entries(LIVE_RESPONSES).map(([k, v]) => [k.replace(MIRROR, other), v]),
-      ),
-      { mirrorUrl: `${other}/` },
-    );
+  it('finds streams through the other mirrors when most are rate limiting', async () => {
+    const up = 'https://v2.thestreameast.su';
+    const ctx = ctxWith(LIVE_RESPONSES, KNOWN_MIRRORS.filter((m) => m !== up));
     expect(await plugin.provider!.getStreams(twinsGiants, ctx)).toHaveLength(2);
   });
 
-  it('throws a clear error when the mirror is rate limiting or down', async () => {
-    const ctx = ctxWith({ [`${MIRROR}/`]: { status: 429, body: 'error code: 1015' } });
-    await expect(plugin.provider!.getStreams(twinsGiants, ctx)).rejects.toThrow(/429.*mirror/i);
+  it('spreads server pages over several mirrors', async () => {
+    const ctx = ctxWith(LIVE_RESPONSES);
+    await plugin.provider!.getStreams(twinsGiants, ctx);
+    const used = new Set(ctx.calls.map((c) => mirrorOf(c.url)).filter(Boolean));
+    expect(used.size).toBeGreaterThan(1);
+  });
+
+  it('falls back to the mirror directory when every known mirror is down', async () => {
+    const fresh = 'https://www.streameast.zz';
+    const ctx = ctxWith(
+      {
+        ...LIVE_RESPONSES,
+        'https://v5.gostreameast.link/': `<a href="${fresh}/">x</a><a href="https://www.streameast.ch/">y</a>`,
+        [`${fresh}/`]: fixture('home.html'),
+      },
+      KNOWN_MIRRORS,
+    );
+    await plugin.provider!.getChannels!(ctx);
+    expect(ctx.calls.some((c) => c.url === `${fresh}/`)).toBe(true);
+  });
+
+  it('throws a clear error when every mirror is rate limiting or down', async () => {
+    const ctx = ctxWith({ 'https://v5.gostreameast.link/': { status: 503, body: '' } }, KNOWN_MIRRORS);
+    await expect(plugin.provider!.getStreams(twinsGiants, ctx)).rejects.toThrow(/mirror/i);
   });
 
   it('lists live and upcoming matches as channels for Test connection', async () => {
@@ -319,7 +353,7 @@ describe('xyzstreams servers', () => {
     const candidates = await plugin.provider!.getStreams(ramsEagles, ctx);
     const xyz = candidates.find((c) => c.label === 'Streameast Server 2');
     expect(xyz?.url).toMatch(
-      /^https:\/\/hlss2\.b-cdn\.net\/nfl6\/mono\.ts\.m3u8\?token=[0-9a-f]{32}&server=1$/,
+      /^https:\/\/hlss2\.b-cdn\.net\/nfl6\/mono\.ts\.m3u8\?token=[0-9a-f]{32}&server=2$/,
     );
     expect(xyz?.headers?.Referer).toBe('https://xyzstreams.st/');
   });

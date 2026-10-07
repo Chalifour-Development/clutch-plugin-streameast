@@ -26,13 +26,17 @@ Linear: LAB-62. A Clutch provider plugin that finds free Streameast streams for 
 
 ## Flow
 
-1. **Match list.** GET the mirror homepage, parse the `m-card`s, and cache the result in
-   `ctx.storage` for 5 minutes, keyed by mirror.
+1. **Match list.** GET a mirror homepage, parse the `m-card`s, and cache the result in
+   `ctx.storage` for 5 minutes. Mirrors (`KNOWN_MIRRORS` in `src/mirrors.ts`) are raced in
+   random order with a 1.5 s stagger; a mirror that errors, answers non-2xx, or lists no
+   matches makes the next one start at once. If all fail, mirrors from the
+   gostreameast.link directory (cached a day) are tried the same way.
 2. **Pick the match.** Clutch game ids are `<sport>:<espnEventId>`, so the first choice is an
    exact `data-espn-event-id` match (confidence 0.9). Otherwise, run `matchGameToChannels`
    on the team names, only among matches starting within 12 hours of `game.startsAt`.
-3. **Sources.** GET the match page, keep the non-premium `stream-alt-item`s (at most 3),
-   and read each one's `iframe#iframe` src. Source `1` reuses the page already fetched.
+3. **Sources.** GET the match page (first mirror whose copy has a player), keep every
+   non-premium `stream-alt-item`, and read each one's `iframe#iframe` src. The active source
+   reuses the page already fetched; each other server's page starts on a different mirror.
 4. **Resolve the embed.** Resolution is generic and works on any embed, stopping after 4
    iframe hops:
    - an `https://...m3u8` literal in the HTML means we are done;
@@ -40,8 +44,9 @@ Linear: LAB-62. A Clutch provider plugin that finds free Streameast streams for 
    - otherwise, follow the first nested `<iframe src>` with the current page as Referer.
    - `xyzstreams.st/embed?<id>`: the page AES-encrypts a token per HLS host. It fetches
      `<host>/api/token` (`{iv, token}` in hex), decrypts with AES-256-CBC using
-     SHA-256(`SECRET_KEY` from the page), and appends `?token=<t>&server=1` to
-     `<host>/<id>/mono.ts.m3u8`. Only https hosts are used; the cleartext duckdns host is
+     SHA-256(`SECRET_KEY` from the page), and appends `?token=<t>&server=<n>` to
+     `<host>/<id>/mono.ts.m3u8`, where `<n>` is read from the page (now `2`; `1` serves a
+     stale playlist). Only https hosts are used; the cleartext duckdns host is
      skipped because Android blocks cleartext playback. Crypto is @noble (pure JS) because
      QuickJS has no WebCrypto, TextEncoder or TextDecoder.
 5. **Candidate.** `kind: 'hls'` with `User-Agent`, `Referer` and `Origin` set to the page
@@ -49,12 +54,11 @@ Linear: LAB-62. A Clutch provider plugin that finds free Streameast streams for 
    they are resolved each time a game is opened, never cached.
 
 Returning `[]` is the normal answer for: no match, not live yet, premium only, or an embed
-we cannot read. We throw only if the mirror itself fails, because the user can fix that
-with the setting below.
+we cannot read. We throw only if every mirror fails.
 
 ## Settings
 
-- `mirrorUrl` (url, default `https://v2.streameast.ch`): change it when a mirror dies.
+None. Mirrors are built in and all used.
 
 ## Risks
 
