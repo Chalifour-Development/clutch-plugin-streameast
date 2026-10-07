@@ -13,19 +13,20 @@ https://github.com/Chalifour-Development/clutch-plugin-streameast
 
 ## Settings
 
-| Setting    | Default                    | Notes                                                      |
-| ---------- | -------------------------- | ---------------------------------------------------------- |
-| Mirror URL | `https://v2.streameast.ch` | Change it if the mirror goes down or starts answering 429. |
-
-Current mirrors are listed at https://v5.gostreameast.link/.
+None. The plugin uses every Streameast mirror it knows (`src/mirrors.ts`), so there is no
+mirror to configure. If every known mirror fails, it falls back to the mirrors listed at
+https://v5.gostreameast.link/.
 
 ## How it works
 
-1. It reads the mirror's homepage (cached for 5 minutes) and finds the match. Streameast tags
+1. It reads a mirror's homepage (cached for 5 minutes) and finds the match. Mirrors are tried in
+   random order, and another mirror joins the race every 1.5 s or as soon as one fails, so a
+   dead or rate-limited mirror costs at most 1.5 s. Streameast tags
    every match with its ESPN event id, which is the same id Clutch uses, so matches are exact
    (confidence 0.9). If there is no id, it matches on team names within 12 hours of kickoff.
-2. It opens the match page and resolves up to 3 free servers in parallel. Premium servers are
-   skipped.
+2. It opens the match page and resolves every free server in parallel, each server page loaded
+   from a different mirror so no single host's rate limit is hit. Premium servers are skipped.
+   Once one server works, the others get 3 more seconds; the whole call stays under 12 s.
 3. It follows each server's embed (nested iframes, the XOR `eval` obfuscation some embeds use,
    and xyzstreams' AES-encrypted tokens) to the signed `.m3u8`, and returns it as an HLS stream with the `User-Agent`, `Referer`
    and `Origin` headers the CDN checks.
@@ -63,9 +64,20 @@ On 2026-10-04 (late evening) the live NHL games (Panthers @ Ducks, Flames @ Krak
 - 1.1.5: the plugin checks the first bytes of a segment and skips PNG-packed servers, so the app
   shows "No streams found" instead of a black screen.
 
+On 2026-10-06 (v1.2.0) every live NHL game (7 of 9; the other two had not started) was checked
+on the Android emulator. Fixes from that run:
+
+- No more mirror setting: every mirror is used, and server pages are spread across them.
+- xyzstreams switched its player to `server=2`. `server=1` still answered, but with a day-old
+  playlist whose segments returned 403, so the plugin found nothing. It now reads the parameter
+  from the player page.
+- All free servers are resolved (it was the first 3, which were often all dead), and every
+  playlist URL an embed lists is tried, not just the first.
+
 ## What it connects to
 
-Only the mirror you configure, the embed hosts that the mirror's pages point at, and their CDNs.
+The Streameast mirrors (and, only if they all fail, the gostreameast.link directory), the embed
+hosts that their pages point at, and their CDNs.
 It sends no user data. The only cookie is `sso_checked=1`, which skips Streameast's login
 redirect.
 

@@ -210,10 +210,10 @@
                 // --- CRITICAL IOS FIXES & ROUTING ---
                 if (isIOS && streamToken) {
                     // Encode the token to prevent special characters from breaking the URL and append server=2
-                    streamSource += "?token=" + encodeURIComponent(streamToken) + "&server=1";
+                    streamSource += "?token=" + encodeURIComponent(streamToken) + "&server=2";
                 } else {
                     // If not on iOS, just append server=2 (token is handled via headers)
-                    streamSource += "?server=1";
+                    streamSource += "?server=2";
                 }
 
                 initClappr(streamSource, streamToken);

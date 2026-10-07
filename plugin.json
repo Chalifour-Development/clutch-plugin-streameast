@@ -1,19 +1,13 @@
 {
   "id": "dev.chalifour.streameast",
   "name": "Streameast",
-  "description": "Free live sports streams from Streameast mirrors.",
-  "version": "1.1.5",
+  "description": "Free live sports streams from every Streameast mirror.",
+  "version": "1.2.0",
   "apiVersion": 1,
-  "capabilities": ["provider"],
+  "capabilities": [
+    "provider"
+  ],
   "main": "dist/plugin.js",
   "homepage": "https://github.com/Chalifour-Development/clutch-plugin-streameast",
-  "settings": [
-    {
-      "key": "mirrorUrl",
-      "type": "url",
-      "label": "Mirror URL",
-      "description": "Streameast mirror to read. Change it when a mirror goes down or rate limits you.",
-      "default": "https://v2.streameast.ch"
-    }
-  ]
+  "settings": []
 }

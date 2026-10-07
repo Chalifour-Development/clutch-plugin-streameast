@@ -9,72 +9,179 @@ import {
 import {
   decodeEvalBlobs,
   decryptXyzToken,
+  findAllM3u8,
   findIframeSrc,
-  findM3u8,
   parseMatches,
+  parseMirrorDirectory,
   parseSources,
   parseXyzEmbed,
   type Match,
   type XyzEmbed,
 } from './parse';
+import { KNOWN_MIRRORS } from './mirrors';
 
-const DEFAULT_MIRROR = 'https://v2.streameast.ch';
+const MIRROR_DIRECTORY = 'https://v5.gostreameast.link/';
+const MIRRORS_KEY = 'mirrors';
+const MIRRORS_TTL_MS = 24 * 3_600_000;
+/** The directory is a nice-to-have; it must not eat into the streams budget. */
+const DIRECTORY_TIMEOUT_MS = 2_000;
+/** How long one mirror gets before the next one is tried alongside it. */
+const MIRROR_STAGGER_MS = 1_500;
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 /** Skips the SSO bounce through connect.php, which is rate limited. */
 const SITE_HEADERS = { 'User-Agent': UA, Cookie: 'sso_checked=1' };
 const CACHE_KEY = 'matches';
 const CACHE_TTL_MS = 5 * 60_000;
-const MAX_SERVERS = 3;
 const MAX_EMBED_HOPS = 4;
 const MATCH_WINDOW_MS = 12 * 3_600_000;
 const ESPN_ID_CONFIDENCE = 0.9;
 const PROBE_TIMEOUT_MS = 5_000;
 /** Below the app's 15 s provider timeout, leaving room for the sandbox round trip. */
 const STREAMS_BUDGET_MS = 12_000;
+/** How long the other servers get once one has resolved. */
+const GRACE_AFTER_FIRST_MS = 3_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function mirrorOf(ctx: PluginContext): string {
-  const raw = ctx.settings.mirrorUrl;
-  const url = typeof raw === 'string' && raw.trim() ? raw.trim() : DEFAULT_MIRROR;
-  return url.replace(/\/+$/, '');
 }
 
 function originOf(url: string): string {
   return /^https?:\/\/[^/]+/.exec(url)?.[0] ?? url;
 }
 
-async function loadMatches(ctx: PluginContext, mirror: string): Promise<Match[]> {
-  const raw = await ctx.storage.get(CACHE_KEY);
-  if (raw) {
-    try {
-      const cached = JSON.parse(raw) as {
-        mirror: string;
-        fetchedAt: number;
-        matches: Match[];
-      };
-      if (cached.mirror === mirror && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
-        return cached.matches;
-      }
-    } catch {
-      // Corrupt cache: refetch below.
-    }
+async function readCache<T>(ctx: PluginContext, key: string, ttlMs: number): Promise<T | undefined> {
+  const raw = await ctx.storage.get(key);
+  if (!raw) return undefined;
+  try {
+    const cached = JSON.parse(raw) as { fetchedAt: number; value: T };
+    return Date.now() - cached.fetchedAt < ttlMs ? cached.value : undefined;
+  } catch {
+    return undefined; // Corrupt cache: refetch.
   }
-  const response = await ctx.fetch(`${mirror}/`, { headers: SITE_HEADERS });
-  if (!response.ok) {
+}
+
+async function writeCache(ctx: PluginContext, key: string, value: unknown): Promise<void> {
+  await ctx.storage.set(key, JSON.stringify({ fetchedAt: Date.now(), value }));
+}
+
+/** Fisher-Yates, so load spreads over the mirrors instead of always hitting the first. */
+function shuffled<T>(items: readonly T[]): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j]!, out[i]!];
+  }
+  return out;
+}
+
+/** Every known mirror, in random order so load spreads instead of always hitting the first. */
+function knownMirrors(): string[] {
+  return shuffled(KNOWN_MIRRORS);
+}
+
+/**
+ * Mirrors on the directory that are not already known, for when every known mirror failed.
+ * The directory's `www.` links redirect to `v2.` hosts, so both spellings name one mirror.
+ * Cached for a day, an empty answer included, so a dead directory costs one try a day.
+ */
+async function directoryMirrors(ctx: PluginContext): Promise<string[]> {
+  let listed = await readCache<string[]>(ctx, MIRRORS_KEY, MIRRORS_TTL_MS);
+  if (!listed) {
+    listed = [];
+    try {
+      const r = await Promise.race([
+        ctx.fetch(MIRROR_DIRECTORY, { headers: { 'User-Agent': UA } }),
+        sleep(DIRECTORY_TIMEOUT_MS).then(() => undefined),
+      ]);
+      if (r?.ok) listed = parseMirrorDirectory(await r.text());
+    } catch (error) {
+      ctx.log.debug('Mirror directory failed', String(error));
+    }
+    await writeCache(ctx, MIRRORS_KEY, listed);
+  }
+  const known = new Set(KNOWN_MIRRORS.map((m) => m.replace('://v2.', '://')));
+  return shuffled(listed.filter((m) => !known.has(m.replace('://www.', '://'))));
+}
+
+/**
+ * Run `attempt` against each mirror until one returns a value. A new mirror joins every
+ * MIRROR_STAGGER_MS (or as soon as one fails), so a hanging mirror costs 1.5 s, not the budget.
+ */
+function firstMirror<T>(
+  mirrors: readonly string[],
+  attempt: (mirror: string) => Promise<T | undefined>,
+): Promise<{ mirror: string; value: T } | undefined> {
+  return new Promise((resolve) => {
+    let next = 0;
+    let running = 0;
+    let done = false;
+    const launch = (): void => {
+      if (done || next >= mirrors.length) {
+        if (!done && running === 0) {
+          done = true;
+          resolve(undefined);
+        }
+        return;
+      }
+      const mirror = mirrors[next++]!;
+      running++;
+      let settled = false;
+      const settle = (value: T | undefined): void => {
+        if (settled) return;
+        settled = true;
+        running--;
+        if (done) return;
+        if (value !== undefined) {
+          done = true;
+          resolve({ mirror, value });
+        } else {
+          launch();
+        }
+      };
+      attempt(mirror).then(settle, () => settle(undefined));
+      void sleep(MIRROR_STAGGER_MS).then(() => {
+        if (!settled) launch();
+      });
+    };
+    launch();
+  });
+}
+
+/** GET a page from the first mirror that serves one `accept` likes; returns its origin too. */
+async function fetchFromMirrors<T>(
+  ctx: PluginContext,
+  mirrors: readonly string[],
+  path: string,
+  accept: (html: string) => T | undefined,
+): Promise<{ mirror: string; value: T } | undefined> {
+  return firstMirror(mirrors, async (mirror) => {
+    const r = await ctx.fetch(mirror + path, { headers: SITE_HEADERS });
+    if (!r.ok) {
+      ctx.log.debug('Mirror', mirror, 'answered', r.status, 'for', path);
+      return undefined;
+    }
+    return accept(await r.text());
+  });
+}
+
+async function loadMatches(ctx: PluginContext): Promise<Match[]> {
+  const cached = await readCache<Match[]>(ctx, CACHE_KEY, CACHE_TTL_MS);
+  if (cached) return cached;
+  const listing = (html: string) => {
+    const matches = parseMatches(html);
+    return matches.length ? matches : undefined;
+  };
+  const hit =
+    (await fetchFromMirrors(ctx, knownMirrors(), '/', listing)) ??
+    (await fetchFromMirrors(ctx, await directoryMirrors(ctx), '/', listing));
+  if (!hit) {
     throw new Error(
-      `Streameast mirror ${mirror} answered ${response.status}. It may be rate limiting or down; try another mirror in Settings, Providers.`,
+      'No Streameast mirror listed any matches. They may all be down or rate limiting.',
     );
   }
-  const matches = parseMatches(await response.text());
-  if (matches.length === 0) {
-    ctx.log.warn('No matches found on', mirror, '- the page layout may have changed.');
-  }
-  await ctx.storage.set(CACHE_KEY, JSON.stringify({ mirror, fetchedAt: Date.now(), matches }));
-  return matches;
+  await writeCache(ctx, CACHE_KEY, hit.value);
+  return hit.value;
 }
 
 function titleOf(m: Match): string {
@@ -197,7 +304,7 @@ async function resolveXyz(
       const token = decryptXyzToken(xyz.secret, data.iv, data.token);
       if (!token) continue;
       return {
-        url: `${server.playlist}?token=${encodeURIComponent(token)}&server=1`,
+        url: `${server.playlist}?token=${encodeURIComponent(token)}&server=${xyz.serverParam}`,
         page,
       };
     } catch (error) {
@@ -207,12 +314,15 @@ async function resolveXyz(
   return undefined;
 }
 
-/** Follow an embed through nested iframes and obfuscation to a playable HLS URL. */
+/**
+ * Follow an embed through nested iframes and obfuscation to its HLS URLs. Some players list
+ * several CDNs for one stream (xstream.st names three instreams.* hosts), so all are returned.
+ */
 async function resolveEmbed(
   ctx: PluginContext,
   embedUrl: string,
   referer: string,
-): Promise<{ url: string; page: string } | undefined> {
+): Promise<{ urls: string[]; page: string } | undefined> {
   let url = embedUrl;
   let ref = referer;
   for (let hop = 0; hop < MAX_EMBED_HOPS; hop++) {
@@ -226,15 +336,29 @@ async function resolveEmbed(
     const page = response.url || url;
     const html = await response.text();
     const xyz = parseXyzEmbed(html, page);
-    if (xyz) return resolveXyz(ctx, xyz, page);
-    const direct = findM3u8(html) ?? decodeEvalBlobs(html).map(findM3u8).find(Boolean);
-    if (direct) return { url: direct, page };
+    if (xyz) {
+      const resolved = await resolveXyz(ctx, xyz, page);
+      return resolved && { urls: [resolved.url], page };
+    }
+    const direct = findAllM3u8(html);
+    const urls = direct.length ? direct : decodeEvalBlobs(html).flatMap(findAllM3u8);
+    if (urls.length) return { urls, page };
     const next = findIframeSrc(html, page);
     if (!next) return undefined;
     ref = page;
     url = next;
   }
   return undefined;
+}
+
+/** The first URL whose playlist loads, probing them all at once. */
+async function firstLoading(
+  ctx: PluginContext,
+  urls: readonly string[],
+  headers: Record<string, string>,
+): Promise<string | undefined> {
+  const ok = await Promise.all(urls.map((url) => playlistLoads(ctx, url, headers)));
+  return urls[ok.indexOf(true)];
 }
 
 export default definePlugin({
@@ -247,50 +371,63 @@ export default definePlugin({
       if (game.status === 'final' || game.status === 'cancelled' || game.status === 'postponed') {
         return [];
       }
-      const mirror = mirrorOf(ctx);
-      const picked = pickMatch(game, await loadMatches(ctx, mirror));
+      const picked = pickMatch(game, await loadMatches(ctx));
       if (!picked) return [];
       const { match, confidence } = picked;
 
-      const matchUrl = mirror + match.path;
-      const first = await ctx.fetch(matchUrl, { headers: SITE_HEADERS });
-      if (!first.ok) {
-        ctx.log.warn('Match page answered', first.status, matchUrl);
-        return [];
-      }
-      const page = parseSources(await first.text());
-      if (!page.iframe) {
+      // A mirror can serve a page without the player (rate limited, or a stale cache), so a
+      // page only counts once it has one.
+      const mirrors = knownMirrors();
+      const landing = await fetchFromMirrors(ctx, mirrors, match.path, (html) => {
+        const page = parseSources(html);
+        return page.iframe ? page : undefined;
+      });
+      if (!landing) {
         ctx.log.info('No player yet for', titleOf(match), '(not live, or premium only).');
         return [];
       }
+      const page = landing.value;
 
       const servers = page.free.length
-        ? page.free.slice(0, MAX_SERVERS)
+        ? page.free
         : [{ index: 1, name: 'Server 1', path: match.path }];
       // The app abandons the whole call at 15 s and shows nothing, so each server races a shared
-      // deadline: servers that resolved in time are returned, slow ones are dropped.
+      // deadline: servers that resolved in time are returned, slow ones are dropped. Dead CDNs
+      // hang rather than refuse, so once one server works the rest get a short grace, not the
+      // whole budget, and the user is not left waiting on a server that will never answer.
+      let firstFound!: () => void;
+      const grace = new Promise<void>((resolve) => (firstFound = resolve)).then(() =>
+        sleep(GRACE_AFTER_FIRST_MS),
+      );
+      const cutoff = Promise.race([deadline, grace]).then(() => undefined);
       const results = await Promise.all(
-        servers.map((server) =>
-          Promise.race([resolveServer(server), deadline.then(() => undefined)]),
+        servers.map((server, i) =>
+          Promise.race([
+            resolveServer(server, i).then((c) => {
+              if (c) firstFound();
+              return c;
+            }),
+            cutoff,
+          ]),
         ),
       );
       return results.filter((c): c is StreamCandidate => c !== undefined);
 
-      async function resolveServer(server: {
-        index: number;
-        name: string;
-        path: string;
-      }): Promise<StreamCandidate | undefined> {
+      async function resolveServer(
+        server: { index: number; name: string; path: string },
+        i: number,
+      ): Promise<StreamCandidate | undefined> {
         try {
           let iframe = page.iframe;
           if (page.free.length && server.index !== (page.activeIndex ?? 1)) {
-            const r = await ctx.fetch(mirror + server.path, {
-              headers: SITE_HEADERS,
-            });
-            iframe = r.ok ? parseSources(await r.text()).iframe : undefined;
+            // Each server starts on a different mirror, so one page load per server does not
+            // pile onto a single host's rate limit.
+            const order = [...mirrors.slice(i % mirrors.length), ...mirrors.slice(0, i % mirrors.length)];
+            const hit = await fetchFromMirrors(ctx, order, server.path, (html) => parseSources(html).iframe);
+            iframe = hit?.value;
           }
           if (!iframe) return undefined;
-          const resolved = await resolveEmbed(ctx, iframe, `${mirror}/`);
+          const resolved = await resolveEmbed(ctx, iframe, `${landing!.mirror}/`);
           if (!resolved) {
             ctx.log.info('Could not read', server.name, 'embed', iframe);
             return undefined;
@@ -301,12 +438,13 @@ export default definePlugin({
             Referer: `${origin}/`,
             Origin: origin,
           };
-          if (!(await playlistLoads(ctx, resolved.url, headers))) {
-            ctx.log.info(server.name, 'playlist did not load; skipping', resolved.url);
+          const url = await firstLoading(ctx, resolved.urls, headers);
+          if (!url) {
+            ctx.log.info(server.name, 'playlist did not load; skipping', resolved.urls.join(' '));
             return undefined;
           }
           return {
-            url: resolved.url,
+            url,
             kind: 'hls',
             label: `Streameast ${server.name}`,
             providerId: ctx.pluginId,
@@ -322,7 +460,7 @@ export default definePlugin({
     },
 
     async getChannels(ctx): Promise<Channel[]> {
-      const matches = await loadMatches(ctx, mirrorOf(ctx));
+      const matches = await loadMatches(ctx);
       return matches.map((m) => ({
         id: m.path,
         name: titleOf(m),

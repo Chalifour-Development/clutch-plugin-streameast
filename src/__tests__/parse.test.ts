@@ -94,7 +94,14 @@ describe('xyzstreams embed', () => {
         { playlist: 'https://us2-hlss2.b-cdn.net/nfl6/mono.ts.m3u8', token: 'https://us2-hlss2.b-cdn.net/api/token' },
         { playlist: 'https://hlss2.b-cdn.net/nfl6/mono.ts.m3u8', token: 'https://hlss2.b-cdn.net/api/token' },
       ],
+      serverParam: '2',
     });
+  });
+
+  it('reads the server parameter the player appends, which picks a live or a stale feed', () => {
+    // server=1 began serving a day-old playlist whose segments 403 once the site moved to 2.
+    const old = fixture('embed-xyzstreams.html').replace(/server=2/g, 'server=1');
+    expect(parseXyzEmbed(old, 'https://xyzstreams.st/embed?nfl6')?.serverParam).toBe('1');
   });
 
   it('is not an xyzstreams page when the markers are missing', () => {
